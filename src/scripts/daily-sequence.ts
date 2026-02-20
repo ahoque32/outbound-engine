@@ -1,6 +1,7 @@
 // Daily Sequence Execution Script
 // Runs daily to execute pending sequence steps
 
+import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { SequenceEngine } from '../core/sequence-engine';
 import { RateLimiter } from '../core/rate-limiter';
@@ -9,7 +10,16 @@ import { LinkedInAdapter } from '../channels/linkedin-adapter';
 import { XAdapter } from '../channels/x-adapter';
 import { EmailAdapter } from '../channels/email-adapter';
 import { VoiceAdapter } from '../channels/voice-adapter';
-import { Campaign, Sequence, Prospect, Touchpoint, Channel } from '../types';
+import { 
+  CampaignRow, 
+  SequenceRow, 
+  ProspectRow, 
+  TouchpointRow, 
+  Channel,
+  campaignFromRow,
+  prospectFromRow,
+  touchpointFromRow,
+} from '../types';
 
 const CHANNEL_ADAPTERS = {
   linkedin: new LinkedInAdapter(),
@@ -32,18 +42,27 @@ async function executeDailySequences() {
   console.log('🚀 Starting daily sequence execution...\n');
   
   // Get all active campaigns
-  const { data: campaigns } = await supabase
+  console.log('[DB] Fetching active campaigns...');
+  const { data: campaigns, error: campaignsError } = await supabase
     .from('campaigns')
     .select('*')
     .eq('status', 'active');
+  
+  if (campaignsError) {
+    console.error('[DB] Error fetching campaigns:', campaignsError);
+    process.exit(1);
+  }
   
   if (!campaigns || campaigns.length === 0) {
     console.log('No active campaigns');
     return;
   }
   
-  for (const campaign of campaigns as Campaign[]) {
-    console.log(`📋 Campaign: ${campaign.name}`);
+  console.log(`[DB] Found ${campaigns.length} active campaigns`);
+  
+  for (const campaignRow of campaigns as CampaignRow[]) {
+    const campaign = campaignFromRow(campaignRow);
+    console.log(`📋 Campaign: ${campaign.name} (${campaign.id})`);
     
     const engine = new SequenceEngine(campaign);
     const rateLimiter = new RateLimiter({
@@ -55,23 +74,35 @@ async function executeDailySequences() {
     
     // Get rate limits for today
     const today = new Date().toISOString().split('T')[0];
-    const { data: rateLimits } = await supabase
+    console.log(`[DB] Fetching rate limits for ${today}...`);
+    const { data: rateLimits, error: rateLimitError } = await supabase
       .from('rate_limits')
       .select('*')
       .eq('campaign_id', campaign.id)
       .eq('date', today);
     
+    if (rateLimitError) {
+      console.error('[DB] Error fetching rate limits:', rateLimitError);
+    }
+    
     const rateLimitMap = new Map(
       (rateLimits || []).map(r => [r.channel as Channel, r])
     );
+    console.log(`[DB] Found ${rateLimits?.length || 0} rate limit records`);
     
     // Get active sequences
-    const { data: sequences } = await supabase
+    console.log(`[DB] Fetching active sequences with next_step_at <= now...`);
+    const { data: sequences, error: seqError } = await supabase
       .from('sequences')
       .select('*')
       .eq('campaign_id', campaign.id)
       .eq('status', 'active')
       .lte('next_step_at', new Date().toISOString());
+    
+    if (seqError) {
+      console.error('[DB] Error fetching sequences:', seqError);
+      continue;
+    }
     
     if (!sequences || sequences.length === 0) {
       console.log('  No pending sequences\n');
@@ -81,48 +112,70 @@ async function executeDailySequences() {
     console.log(`  ${sequences.length} pending sequences`);
     
     // Get all prospects for these sequences
-    const prospectIds = sequences.map(s => s.prospectId);
-    const { data: prospects } = await supabase
+    const prospectIds = sequences.map(s => s.prospect_id);
+    console.log(`[DB] Fetching ${prospectIds.length} prospects...`);
+    const { data: prospects, error: prospectError } = await supabase
       .from('prospects')
       .select('*')
       .in('id', prospectIds);
     
+    if (prospectError) {
+      console.error('[DB] Error fetching prospects:', prospectError);
+      continue;
+    }
+    
     const prospectMap = new Map(
-      (prospects || []).map(p => [p.id, p as Prospect])
+      (prospects || []).map(p => [p.id, prospectFromRow(p as ProspectRow)])
     );
+    console.log(`[DB] Found ${prospects?.length || 0} prospects`);
     
     // Get touchpoints for these prospects
-    const { data: touchpoints } = await supabase
+    console.log(`[DB] Fetching touchpoints for prospects...`);
+    const { data: touchpoints, error: touchError } = await supabase
       .from('touchpoints')
       .select('*')
       .in('prospect_id', prospectIds);
     
-    const touchpointsMap = new Map<string, Touchpoint[]>();
+    if (touchError) {
+      console.error('[DB] Error fetching touchpoints:', touchError);
+    }
+    
+    const touchpointsMap = new Map<string, ReturnType<typeof touchpointFromRow>[]>();
     for (const t of touchpoints || []) {
       const list = touchpointsMap.get(t.prospect_id) || [];
-      list.push(t as Touchpoint);
+      list.push(touchpointFromRow(t as TouchpointRow));
       touchpointsMap.set(t.prospect_id, list);
     }
+    console.log(`[DB] Found ${touchpoints?.length || 0} touchpoints`);
     
     // Execute sequences
     let executed = 0;
     let skipped = 0;
     let errors = 0;
     
-    for (const sequence of sequences as Sequence[]) {
-      const prospect = prospectMap.get(sequence.prospectId);
-      if (!prospect) continue;
+    for (const sequenceRow of sequences as SequenceRow[]) {
+      const prospect = prospectMap.get(sequenceRow.prospect_id);
+      if (!prospect) {
+        console.log(`  ⚠️  Prospect ${sequenceRow.prospect_id} not found, skipping`);
+        continue;
+      }
       
       const prospectTouchpoints = touchpointsMap.get(prospect.id) || [];
       
       // Get next step
+      const sequence = sequenceFromRow(sequenceRow);
       const next = engine.getNextStep(sequence, prospectTouchpoints);
       if (!next) {
         // Sequence complete
-        await supabase
+        console.log(`[DB] Marking sequence ${sequence.id} as completed`);
+        const { error: updateError } = await supabase
           .from('sequences')
           .update({ status: 'completed', completed_at: new Date().toISOString() })
           .eq('id', sequence.id);
+        
+        if (updateError) {
+          console.error('[DB] Error updating sequence:', updateError);
+        }
         continue;
       }
       
@@ -153,11 +206,13 @@ async function executeDailySequences() {
       }
       
       try {
+        console.log(`[Adapter] Sending ${next.step.channel} ${next.step.action} to ${prospect.name}...`);
         const result = await adapter.send(prospect, next.step.action, next.step.template);
         
         if (result.success) {
           // Record touchpoint
-          await supabase.from('touchpoints').insert({
+          console.log(`[DB] Recording touchpoint for ${prospect.name}...`);
+          const { error: touchError } = await supabase.from('touchpoints').insert({
             prospect_id: prospect.id,
             campaign_id: campaign.id,
             channel: next.step.channel,
@@ -168,14 +223,47 @@ async function executeDailySequences() {
             sent_at: new Date().toISOString(),
           });
           
-          // Update prospect state
-          const newState = ProspectStateMachine.updateLinkedInState(
-            prospect.linkedinState as any,
-            next.step.action,
-            result.outcome || 'sent'
-          );
+          if (touchError) {
+            console.error('[DB] Error recording touchpoint:', touchError);
+          }
           
-          await supabase
+          // Update prospect state based on channel
+          let newState: string;
+          switch (next.step.channel) {
+            case 'email':
+              newState = ProspectStateMachine.updateEmailState(
+                prospect.emailState,
+                next.step.action,
+                result.outcome || 'sent'
+              );
+              break;
+            case 'linkedin':
+              newState = ProspectStateMachine.updateLinkedInState(
+                prospect.linkedinState,
+                next.step.action,
+                result.outcome || 'sent'
+              );
+              break;
+            case 'x':
+              newState = ProspectStateMachine.updateXState(
+                prospect.xState,
+                next.step.action,
+                result.outcome || 'sent'
+              );
+              break;
+            case 'voice':
+              newState = ProspectStateMachine.updateVoiceState(
+                prospect.voiceState,
+                next.step.action,
+                result.outcome || 'sent'
+              );
+              break;
+            default:
+              newState = prospect.state;
+          }
+          
+          console.log(`[DB] Updating prospect ${prospect.id} state...`);
+          const { error: prospectUpdateError } = await supabase
             .from('prospects')
             .update({ 
               [`${next.step.channel}_state`]: newState,
@@ -183,28 +271,42 @@ async function executeDailySequences() {
             })
             .eq('id', prospect.id);
           
+          if (prospectUpdateError) {
+            console.error('[DB] Error updating prospect:', prospectUpdateError);
+          }
+          
           // Update rate limit
-          await supabase
+          console.log(`[DB] Updating rate limit for ${next.step.channel}...`);
+          const { error: rateError } = await supabase
             .from('rate_limits')
             .upsert({
               campaign_id: campaign.id,
               channel: next.step.channel,
               date: today,
               count: currentCount + 1,
-              limit: campaign.dailyLimits[next.step.channel],
+              max_limit: campaign.dailyLimits[next.step.channel],
             }, { onConflict: 'campaign_id,channel,date' });
+          
+          if (rateError) {
+            console.error('[DB] Error updating rate limit:', rateError);
+          }
           
           // Advance sequence
           const updates = engine.advanceSequence(sequence);
           const nextExecution = engine.calculateNextExecution(sequence, 1);
           
-          await supabase
+          console.log(`[DB] Advancing sequence ${sequence.id} to step ${updates.currentStep}...`);
+          const { error: seqUpdateError } = await supabase
             .from('sequences')
             .update({
-              ...updates,
+              current_step: updates.currentStep,
               next_step_at: nextExecution.toISOString(),
             })
             .eq('id', sequence.id);
+          
+          if (seqUpdateError) {
+            console.error('[DB] Error updating sequence:', seqUpdateError);
+          }
           
           executed++;
           console.log(`  ✓ ${prospect.name}: ${next.step.channel} ${next.step.action}`);
@@ -222,6 +324,23 @@ async function executeDailySequences() {
   }
   
   console.log('✅ Daily sequence execution complete');
+}
+
+// Import sequenceFromRow for use in the loop
+function sequenceFromRow(row: SequenceRow) {
+  return {
+    id: row.id,
+    prospectId: row.prospect_id,
+    campaignId: row.campaign_id,
+    templateId: row.template_id,
+    currentStep: row.current_step,
+    nextStepAt: row.next_step_at ? new Date(row.next_step_at) : undefined,
+    status: row.status,
+    startedAt: new Date(row.started_at),
+    completedAt: row.completed_at ? new Date(row.completed_at) : undefined,
+    createdAt: new Date(row.created_at),
+    updatedAt: new Date(row.updated_at),
+  };
 }
 
 executeDailySequences().catch(console.error);

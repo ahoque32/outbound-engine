@@ -14,6 +14,7 @@ interface SequenceStep {
   body?: string;
 }
 
+// DB Row types (snake_case)
 interface SequenceRow {
   id: string;
   campaign_id: string;
@@ -29,6 +30,11 @@ interface ProspectRow {
   first_name: string | null;
   last_name: string | null;
   company: string | null;
+  linkedin_url: string | null;
+  x_handle: string | null;
+  website: string | null;
+  industry: string | null;
+  city: string | null;
 }
 
 interface CampaignRow {
@@ -55,15 +61,23 @@ export class SequenceRunner {
     const stats = { sent: 0, skipped: 0, errors: 0 };
 
     // 1. Get active campaigns with sequence templates
+    console.log('[DB] Fetching active campaigns...');
     const { data: campaigns, error: cErr } = await this.supabase
       .from('campaigns')
       .select('*')
       .eq('status', 'active');
 
-    if (cErr || !campaigns?.length) {
+    if (cErr) {
+      console.error('[DB] Error fetching campaigns:', cErr);
+      return stats;
+    }
+
+    if (!campaigns?.length) {
       console.log('[Runner] No active campaigns found');
       return stats;
     }
+
+    console.log(`[Runner] Found ${campaigns.length} active campaigns`);
 
     for (const campaign of campaigns as CampaignRow[]) {
       console.log(`[Runner] Campaign: ${campaign.name} (${campaign.id})`);
@@ -74,11 +88,17 @@ export class SequenceRunner {
       }
 
       // 2. Get active sequences for this campaign
-      const { data: sequences } = await this.supabase
+      console.log(`[DB] Fetching active sequences for campaign ${campaign.id}...`);
+      const { data: sequences, error: seqErr } = await this.supabase
         .from('sequences')
         .select('*')
         .eq('campaign_id', campaign.id)
         .eq('status', 'active');
+
+      if (seqErr) {
+        console.error('[DB] Error fetching sequences:', seqErr);
+        continue;
+      }
 
       if (!sequences?.length) {
         console.log('[Runner] No active sequences');
@@ -93,10 +113,15 @@ export class SequenceRunner {
         if (!step) {
           // Sequence complete
           console.log(`[Runner] Sequence ${seq.id} complete — no more steps`);
-          await this.supabase
+          console.log(`[DB] Marking sequence ${seq.id} as completed...`);
+          const { error: updateErr } = await this.supabase
             .from('sequences')
             .update({ status: 'completed', completed_at: new Date().toISOString() })
             .eq('id', seq.id);
+          
+          if (updateErr) {
+            console.error('[DB] Error updating sequence:', updateErr);
+          }
           continue;
         }
 
@@ -116,11 +141,18 @@ export class SequenceRunner {
         }
 
         // 4. Get prospect
-        const { data: prospect } = await this.supabase
+        console.log(`[DB] Fetching prospect ${seq.prospect_id}...`);
+        const { data: prospect, error: prospectErr } = await this.supabase
           .from('prospects')
           .select('*')
           .eq('id', seq.prospect_id)
           .single();
+
+        if (prospectErr) {
+          console.error('[DB] Error fetching prospect:', prospectErr);
+          stats.errors++;
+          continue;
+        }
 
         if (!prospect) {
           console.log(`[Runner] Prospect ${seq.prospect_id} not found`);
@@ -137,24 +169,24 @@ export class SequenceRunner {
         }
 
         // 6. Personalize and send
-        const subject = this.personalize(step.subject || 'Quick question', prospect);
-        const body = this.personalize(step.body || '', prospect);
+        const subject = this.personalize(step.subject || 'Quick question', prospect as ProspectRow);
+        const body = this.personalize(step.body || '', prospect as ProspectRow);
 
         const prospectObj = {
           id: prospect.id,
-          name: [prospect.first_name, prospect.last_name].filter(Boolean).join(' ') || prospect.email,
-          email: prospect.email,
-          company: prospect.company,
+          name: [(prospect as ProspectRow).first_name, (prospect as ProspectRow).last_name].filter(Boolean).join(' ') || (prospect as ProspectRow).email,
+          email: (prospect as ProspectRow).email,
+          company: (prospect as ProspectRow).company,
           emailState: 'not_sent' as const,
           // Minimal fields needed
           campaignId: seq.campaign_id,
           title: '',
-          linkedinUrl: prospect.linkedin_url,
-          xHandle: prospect.x_handle,
-          website: prospect.website,
-          industry: prospect.industry,
+          linkedinUrl: (prospect as ProspectRow).linkedin_url,
+          xHandle: (prospect as ProspectRow).x_handle,
+          website: (prospect as ProspectRow).website,
+          industry: (prospect as ProspectRow).industry,
           companySize: '',
-          location: prospect.city || '',
+          location: (prospect as ProspectRow).city || '',
           state: 'contacted' as any,
           linkedinState: 'not_connected' as any,
           xState: 'not_following' as any,
@@ -164,11 +196,13 @@ export class SequenceRunner {
           updatedAt: new Date(),
         };
 
+        console.log(`[EmailAdapter] Sending cold email to ${(prospect as ProspectRow).email}...`);
         const result = await this.emailAdapter.sendColdEmail(prospectObj, subject, body);
 
         if (result.success) {
           // 7. Record touchpoint
-          await this.supabase.from('touchpoints').insert({
+          console.log(`[DB] Recording touchpoint for ${(prospect as ProspectRow).email}...`);
+          const { error: touchErr } = await this.supabase.from('touchpoints').insert({
             sequence_id: seq.id,
             prospect_id: prospect.id,
             channel: 'email',
@@ -178,27 +212,41 @@ export class SequenceRunner {
             sent_at: new Date().toISOString(),
           });
 
+          if (touchErr) {
+            console.error('[DB] Error recording touchpoint:', touchErr);
+          }
+
           // 8. Advance sequence
-          await this.supabase
+          console.log(`[DB] Advancing sequence ${seq.id} to step ${seq.current_step + 1}...`);
+          const { error: advanceErr } = await this.supabase
             .from('sequences')
             .update({ current_step: seq.current_step + 1 })
             .eq('id', seq.id);
 
+          if (advanceErr) {
+            console.error('[DB] Error advancing sequence:', advanceErr);
+          }
+
           // 9. Update rate limit
+          console.log(`[DB] Incrementing rate limit for ${result.metadata?.from || 'unknown'}...`);
           await this.incrementRateLimit(result.metadata?.from || 'unknown');
 
           // 10. Update prospect status
-          await this.supabase
+          console.log(`[DB] Updating prospect ${prospect.id} status to contacted...`);
+          const { error: statusErr } = await this.supabase
             .from('prospects')
-            .update({ status: 'contacted' })
-            .eq('id', prospect.id)
-            .eq('status', 'new');
+            .update({ state: 'contacted' })
+            .eq('id', prospect.id);
+
+          if (statusErr) {
+            console.error('[DB] Error updating prospect status:', statusErr);
+          }
 
           stats.sent++;
-          console.log(`[Runner] ✓ Sent step ${seq.current_step} to ${prospect.email}`);
+          console.log(`[Runner] ✓ Sent step ${seq.current_step} to ${(prospect as ProspectRow).email}`);
         } else {
           stats.errors++;
-          console.log(`[Runner] ✗ Failed for ${prospect.email}: ${result.error}`);
+          console.log(`[Runner] ✗ Failed for ${(prospect as ProspectRow).email}: ${result.error}`);
         }
 
         // Human-like delay between sends
@@ -210,38 +258,44 @@ export class SequenceRunner {
     return stats;
   }
 
-  private personalize(template: string, prospect: any): string {
+  private personalize(template: string, prospect: ProspectRow): string {
     return template
-      .replace(/\{first_name\}/g, prospect.first_name || 'there')
-      .replace(/\{last_name\}/g, prospect.last_name || '')
-      .replace(/\{company\}/g, prospect.company || 'your company')
-      .replace(/\{business_name\}/g, prospect.company || 'your business')
-      .replace(/\{email\}/g, prospect.email || '')
-      .replace(/\{city\}/g, prospect.city || 'your area')
-      .replace(/\{industry\}/g, prospect.industry || 'your industry')
-      .replace(/\{region\}/g, prospect.city || 'your area');
+      .replace(/\{\{first_name\}\}/g, prospect.first_name || 'there')
+      .replace(/\{\{last_name\}\}/g, prospect.last_name || '')
+      .replace(/\{\{company\}\}/g, prospect.company || 'your company')
+      .replace(/\{\{business_name\}\}/g, prospect.company || 'your business')
+      .replace(/\{\{email\}\}/g, prospect.email || '')
+      .replace(/\{\{city\}\}/g, prospect.city || 'your area')
+      .replace(/\{\{industry\}\}/g, prospect.industry || 'your industry')
+      .replace(/\{\{region\}\}/g, prospect.city || 'your area')
+      .replace(/\{\{website\}\}/g, prospect.website || 'your website');
   }
 
   private async checkRateLimit(prospectEmail: string): Promise<{ allowed: boolean; reason?: string }> {
     const today = new Date().toISOString().split('T')[0];
 
     // Check all inboxes - find total daily sends
-    const { data: limits } = await this.supabase
+    console.log(`[DB] Checking rate limits for email channel on ${today}...`);
+    const { data: limits, error } = await this.supabase
       .from('rate_limits')
       .select('*')
       .eq('channel', 'email')
       .eq('date', today);
 
+    if (error) {
+      console.error('[DB] Error checking rate limits:', error);
+    }
+
     // Check per-inbox limits
     for (const limit of limits || []) {
-      if (limit.daily_count >= WARMUP_DAILY_LIMIT) {
+      if (limit.count >= WARMUP_DAILY_LIMIT) {
         // This inbox is maxed, but others might be available
         continue;
       }
     }
 
     // Total across all inboxes
-    const totalSent = (limits || []).reduce((sum: number, l: any) => sum + (l.daily_count || 0), 0);
+    const totalSent = (limits || []).reduce((sum: number, l: any) => sum + (l.count || 0), 0);
     const totalLimit = EmailAdapter.getSenderInboxes().length * WARMUP_DAILY_LIMIT;
 
     if (totalSent >= totalLimit) {
@@ -254,28 +308,43 @@ export class SequenceRunner {
   private async incrementRateLimit(inboxEmail: string): Promise<void> {
     const today = new Date().toISOString().split('T')[0];
 
-    // Try to upsert
-    const { data: existing } = await this.supabase
+    // Try to get existing record
+    console.log(`[DB] Fetching existing rate limit for ${inboxEmail} on ${today}...`);
+    const { data: existing, error: fetchErr } = await this.supabase
       .from('rate_limits')
       .select('*')
       .eq('channel', 'email')
-      .eq('inbox_email', inboxEmail)
+      .eq('campaign_id', 'global') // Using global for now
       .eq('date', today)
       .single();
 
+    if (fetchErr && fetchErr.code !== 'PGRST116') { // PGRST116 = no rows
+      console.error('[DB] Error fetching rate limit:', fetchErr);
+    }
+
     if (existing) {
-      await this.supabase
+      console.log(`[DB] Updating rate limit count to ${(existing.count || 0) + 1}...`);
+      const { error: updateErr } = await this.supabase
         .from('rate_limits')
-        .update({ daily_count: (existing.daily_count || 0) + 1 })
+        .update({ count: (existing.count || 0) + 1 })
         .eq('id', existing.id);
+      
+      if (updateErr) {
+        console.error('[DB] Error updating rate limit:', updateErr);
+      }
     } else {
-      await this.supabase.from('rate_limits').insert({
+      console.log(`[DB] Inserting new rate limit for ${inboxEmail}...`);
+      const { error: insertErr } = await this.supabase.from('rate_limits').insert({
+        campaign_id: 'global',
         channel: 'email',
-        inbox_email: inboxEmail,
-        daily_count: 1,
-        hourly_count: 1,
         date: today,
+        count: 1,
+        max_limit: WARMUP_DAILY_LIMIT,
       });
+
+      if (insertErr) {
+        console.error('[DB] Error inserting rate limit:', insertErr);
+      }
     }
   }
 }

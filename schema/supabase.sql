@@ -89,7 +89,7 @@ CREATE TABLE rate_limits (
   channel TEXT NOT NULL,
   date DATE NOT NULL,
   count INTEGER DEFAULT 0,
-  limit INTEGER NOT NULL,
+  max_limit INTEGER NOT NULL,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(campaign_id, channel, date)
