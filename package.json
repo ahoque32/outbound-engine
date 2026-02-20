@@ -10,6 +10,9 @@
     "batch": "ts-node src/scripts/run-batch.ts",
     "daily": "ts-node src/scripts/daily-sequence.ts",
     "report": "ts-node src/scripts/daily-report.ts",
+    "dialer": "DRY_RUN=true ts-node src/scripts/run-dialer.ts",
+    "dialer:live": "ts-node src/scripts/run-dialer.ts --live",
+    "dialer:report": "ts-node src/scripts/dialer-report.ts",
     "test": "jest"
   },
   "keywords": [
@@ -27,7 +30,8 @@
     "commander": "^11.1.0",
     "csv-parse": "^5.5.0",
     "dotenv": "^16.3.0",
-    "pg": "^8.18.0"
+    "pg": "^8.18.0",
+    "twilio": "^5.12.2"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
