@@ -17,7 +17,7 @@ interface AgentMailMessage {
   thread_id?: string;
 }
 
-interface ReplyDetectionResult {
+export interface ReplyDetectionResult {
   prospectId: string;
   campaignId: string;
   channel: Channel;
@@ -26,7 +26,7 @@ interface ReplyDetectionResult {
   metadata?: Record<string, any>;
 }
 
-interface PauseAction {
+export interface PauseAction {
   sequenceId: string;
   prospectId: string;
   campaignId: string;

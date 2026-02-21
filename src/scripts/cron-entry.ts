@@ -8,14 +8,13 @@ async function main() {
   
   // Import and run daily sequence
   const { executeDailySequences } = await import('./daily-sequence');
-  const result = await executeDailySequences();
+  await executeDailySequences();
   
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
   
   const summary = {
     timestamp: new Date().toISOString(),
     elapsedSeconds: parseFloat(elapsed),
-    ...(result || { executed: 0, skipped: 0, errors: 0 }),
   };
   
   console.log('\n📊 CRON SUMMARY:');

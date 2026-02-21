@@ -28,7 +28,7 @@ const CHANNEL_ADAPTERS = {
   voice: new VoiceAdapter(),
 };
 
-async function executeDailySequences() {
+export async function executeDailySequences() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   
@@ -206,8 +206,20 @@ async function executeDailySequences() {
       }
       
       try {
+        // Replace template placeholders with prospect data
+        const nameParts = (prospect.name || '').split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        const personalizedContent = (next.step.template || '')
+          .replace(/\{\{first_name\}\}/g, firstName)
+          .replace(/\{\{last_name\}\}/g, lastName)
+          .replace(/\{\{company\}\}/g, prospect.company || '')
+          .replace(/\{\{website\}\}/g, prospect.website || '')
+          .replace(/\{\{industry\}\}/g, prospect.industry || '')
+          .replace(/\{\{name\}\}/g, prospect.name || '');
+
         console.log(`[Adapter] Sending ${next.step.channel} ${next.step.action} to ${prospect.name}...`);
-        const result = await adapter.send(prospect, next.step.action, next.step.template);
+        const result = await adapter.send(prospect, next.step.action, personalizedContent);
         
         if (result.success) {
           // Record touchpoint
@@ -217,7 +229,7 @@ async function executeDailySequences() {
             campaign_id: campaign.id,
             channel: next.step.channel,
             action: next.step.action,
-            content: next.step.template,
+            content: personalizedContent,
             outcome: result.outcome,
             metadata: result.metadata,
             sent_at: new Date().toISOString(),

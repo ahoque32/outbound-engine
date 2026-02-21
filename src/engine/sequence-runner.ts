@@ -27,9 +27,8 @@ interface SequenceRow {
 interface ProspectRow {
   id: string;
   email: string;
-  first_name: string | null;
-  last_name: string | null;
-  company: string | null;
+  name: string | null;
+  company: string | null | undefined;
   linkedin_url: string | null;
   x_handle: string | null;
   website: string | null;
@@ -174,17 +173,17 @@ export class SequenceRunner {
 
         const prospectObj = {
           id: prospect.id,
-          name: [(prospect as ProspectRow).first_name, (prospect as ProspectRow).last_name].filter(Boolean).join(' ') || (prospect as ProspectRow).email,
+          name: (prospect as ProspectRow).name || (prospect as ProspectRow).email,
           email: (prospect as ProspectRow).email,
-          company: (prospect as ProspectRow).company,
+          company: (prospect as ProspectRow).company || undefined,
           emailState: 'not_sent' as const,
           // Minimal fields needed
           campaignId: seq.campaign_id,
           title: '',
-          linkedinUrl: (prospect as ProspectRow).linkedin_url,
-          xHandle: (prospect as ProspectRow).x_handle,
-          website: (prospect as ProspectRow).website,
-          industry: (prospect as ProspectRow).industry,
+          linkedinUrl: (prospect as ProspectRow).linkedin_url || undefined,
+          xHandle: (prospect as ProspectRow).x_handle || undefined,
+          website: (prospect as ProspectRow).website || undefined,
+          industry: (prospect as ProspectRow).industry || undefined,
           companySize: '',
           location: (prospect as ProspectRow).city || '',
           state: 'contacted' as any,
@@ -260,8 +259,8 @@ export class SequenceRunner {
 
   private personalize(template: string, prospect: ProspectRow): string {
     return template
-      .replace(/\{\{first_name\}\}/g, prospect.first_name || 'there')
-      .replace(/\{\{last_name\}\}/g, prospect.last_name || '')
+      .replace(/\{\{first_name\}\}/g, ((prospect as any).name || '').split(' ')[0] || 'there')
+      .replace(/\{\{last_name\}\}/g, ((prospect as any).name || '').split(' ').slice(1).join(' ') || '')
       .replace(/\{\{company\}\}/g, prospect.company || 'your company')
       .replace(/\{\{business_name\}\}/g, prospect.company || 'your business')
       .replace(/\{\{email\}\}/g, prospect.email || '')
