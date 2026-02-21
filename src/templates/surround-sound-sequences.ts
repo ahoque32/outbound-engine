@@ -201,39 +201,30 @@ export function getAllTemplates(): SequenceTemplate[] {
 }
 
 // Get template based on prospect data availability
+// NOTE: LinkedIn and X channels are disabled pending account setup.
+// All prospects get email-voice for now. When LinkedIn/X are ready,
+// restore the multi-channel logic below.
 export function getRecommendedTemplate(prospect: {
   linkedinUrl?: string;
   xHandle?: string;
   email?: string;
   phone?: string;
 }): string {
+  // LinkedIn/X disabled — always use email + voice
+  return 'email-voice';
+
+  /* FUTURE: Re-enable when LinkedIn/X accounts are ready
   const hasLinkedIn = !!prospect.linkedinUrl;
   const hasX = !!prospect.xHandle;
   const hasEmail = !!prospect.email;
   const hasPhone = !!prospect.phone;
 
-  // Full surround if we have all channels
-  if (hasLinkedIn && hasX && hasEmail && hasPhone) {
-    return 'full-surround';
-  }
-
-  // Social first if we have social but no phone
-  if ((hasLinkedIn || hasX) && hasEmail && !hasPhone) {
-    return 'social-first';
-  }
-
-  // Email + voice if we have email and phone but limited social
-  if (hasEmail && hasPhone && (!hasLinkedIn || !hasX)) {
-    return 'email-voice';
-  }
-
-  // Default to social-first if we have any social
-  if (hasLinkedIn || hasX) {
-    return 'social-first';
-  }
-
-  // Fallback to email-voice
+  if (hasLinkedIn && hasX && hasEmail && hasPhone) return 'full-surround';
+  if ((hasLinkedIn || hasX) && hasEmail && !hasPhone) return 'social-first';
+  if (hasEmail && hasPhone && (!hasLinkedIn || !hasX)) return 'email-voice';
+  if (hasLinkedIn || hasX) return 'social-first';
   return 'email-voice';
+  */
 }
 
 // Extend SequenceTemplate type to include description

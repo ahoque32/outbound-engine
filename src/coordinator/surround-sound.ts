@@ -485,60 +485,31 @@ export class SurroundSoundCoordinator {
     }
   }
 
-  // Execute LinkedIn action (stub)
+  // LinkedIn channel — DISABLED (pending aged account)
+  // Kept for future re-enablement
   private async executeLinkedInAction(
     prospect: Prospect,
     step: SequenceStep
   ): Promise<TouchpointResult> {
-    console.log(`[SurroundSound] LinkedIn ${step.action} - STUB (would use Camoufox)`);
-
-    // Stub implementation - just log what would happen
-    const actions: Record<string, string> = {
-      connection_request: 'sendConnectionRequest',
-      message: 'sendMessage',
-      engage: 'engageWithContent',
-    };
-
-    const linkedInAction = actions[step.action] || step.action;
-
-    // Return simulated success
+    console.log(`[SurroundSound] LinkedIn DISABLED — skipping ${step.action} for ${prospect.name}`);
     return {
-      success: true,
-      outcome: step.action === 'connection_request' ? 'request_sent' : 'delivered',
-      metadata: {
-        stub: true,
-        action: linkedInAction,
-        linkedinUrl: prospect.linkedinUrl,
-        note: 'Real implementation pending Camoufox LinkedIn automation',
-      },
+      success: false,
+      error: 'LinkedIn channel disabled — no account configured',
+      metadata: { channel_disabled: true },
     };
   }
 
-  // Execute X action (stub)
+  // X/Twitter channel — DISABLED (pending setup)
+  // Kept for future re-enablement
   private async executeXAction(
     prospect: Prospect,
     step: SequenceStep
   ): Promise<TouchpointResult> {
-    console.log(`[SurroundSound] X/Twitter ${step.action} - STUB`);
-
-    const actions: Record<string, string> = {
-      follow: 'follow',
-      follow_and_engage: 'follow',
-      dm: 'sendDM',
-      like: 'likeRecentPost',
-    };
-
-    const xAction = actions[step.action] || step.action;
-
+    console.log(`[SurroundSound] X/Twitter DISABLED — skipping ${step.action} for ${prospect.name}`);
     return {
-      success: true,
-      outcome: step.action === 'follow' ? 'followed' : 'dm_sent',
-      metadata: {
-        stub: true,
-        action: xAction,
-        xHandle: prospect.xHandle,
-        note: 'Real implementation pending X API or browser automation',
-      },
+      success: false,
+      error: 'X channel disabled — no account configured',
+      metadata: { channel_disabled: true },
     };
   }
 
@@ -738,8 +709,16 @@ Best,
     return hasTouch;
   }
 
+  // Channels currently enabled for outreach
+  private static ENABLED_CHANNELS: Set<Channel> = new Set(['email', 'voice']);
+
   // Check if prospect has required data for channel
   private hasRequiredData(prospect: Prospect, channel: Channel): boolean {
+    // Skip disabled channels entirely
+    if (!SurroundSoundCoordinator.ENABLED_CHANNELS.has(channel)) {
+      return false;
+    }
+
     const requirements: Record<Channel, string[]> = {
       email: ['email'],
       linkedin: ['linkedinUrl'],
