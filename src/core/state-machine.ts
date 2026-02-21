@@ -8,11 +8,12 @@ export class ProspectStateMachine {
   private static readonly TRANSITIONS: Map<ProspectState, ProspectState[]> = new Map([
     ['discovered', ['researched']],
     ['researched', ['contacted']],
-    ['contacted', ['engaged', 'not_interested']],
-    ['engaged', ['qualified', 'not_interested']],
+    ['contacted', ['engaged', 'not_interested', 'unresponsive']],
+    ['engaged', ['qualified', 'not_interested', 'unresponsive']],
     ['qualified', ['booked', 'not_interested']],
     ['booked', ['converted', 'not_interested']],
-    ['unresponsive', ['contacted']], // Can re-engage
+    ['unresponsive', ['contacted', 'not_interested']], // Can re-engage
+    ['not_interested', ['discovered']], // Terminal state, can only re-enter if prospect re-engages
   ]);
 
   // Channel state transitions
@@ -25,7 +26,12 @@ export class ProspectStateMachine {
       'replied': { 'message_sent': 'messaged' },
     };
 
-    return transitions[current]?.[outcome] || current;
+    const newState = transitions[current]?.[outcome];
+    if (!newState) {
+      console.log(`[StateMachine] Invalid LinkedIn transition from ${current} with outcome ${outcome}`);
+      return current;
+    }
+    return newState;
   }
 
   static updateXState(current: XState, action: string, outcome: string): XState {
@@ -37,7 +43,12 @@ export class ProspectStateMachine {
       'dm_replied': { 'dm_sent': 'dm_sent' },
     };
 
-    return transitions[current]?.[outcome] || current;
+    const newState = transitions[current]?.[outcome];
+    if (!newState) {
+      console.log(`[StateMachine] Invalid X transition from ${current} with outcome ${outcome}`);
+      return current;
+    }
+    return newState;
   }
 
   static updateEmailState(current: EmailState, action: string, outcome: string): EmailState {
@@ -49,7 +60,12 @@ export class ProspectStateMachine {
       'bounced': {},
     };
 
-    return transitions[current]?.[outcome] || current;
+    const newState = transitions[current]?.[outcome];
+    if (!newState) {
+      console.log(`[StateMachine] Invalid Email transition from ${current} with outcome ${outcome}`);
+      return current;
+    }
+    return newState;
   }
 
   static updateVoiceState(current: VoiceState, action: string, outcome: string): VoiceState {
@@ -61,13 +77,23 @@ export class ProspectStateMachine {
       'booked': {},
     };
 
-    return transitions[current]?.[outcome] || current;
+    const newState = transitions[current]?.[outcome];
+    if (!newState) {
+      console.log(`[StateMachine] Invalid Voice transition from ${current} with outcome ${outcome}`);
+      return current;
+    }
+    return newState;
   }
 
   // Determine main prospect state from channel states
   static determineMainState(prospect: Prospect, touchpoints: Touchpoint[]): ProspectState {
     // If booked on any channel, main state is booked
-    if (prospect.voiceState === 'booked') return 'booked';
+    if (prospect.voiceState === 'booked') {
+      if (this.canTransition(prospect.state, 'booked')) {
+        return 'booked';
+      }
+      return prospect.state;
+    }
     
     // Count positive touchpoints
     const positiveTouches = touchpoints.filter(t => 
@@ -75,11 +101,18 @@ export class ProspectStateMachine {
     ).length;
 
     // State logic based on touchpoints
-    if (positiveTouches >= 3) return 'qualified';
-    if (positiveTouches >= 1) return 'engaged';
-    if (touchpoints.length > 0) return 'contacted';
+    let newState: ProspectState = prospect.state;
+    if (positiveTouches >= 3) newState = 'qualified';
+    else if (positiveTouches >= 1) newState = 'engaged';
+    else if (touchpoints.length > 0) newState = 'contacted';
     
-    return prospect.state;
+    // Validate transition
+    if (newState !== prospect.state && !this.canTransition(prospect.state, newState)) {
+      console.log(`[StateMachine] Invalid transition from ${prospect.state} to ${newState}, keeping current state`);
+      return prospect.state;
+    }
+    
+    return newState;
   }
 
   // Check if prospect is unresponsive

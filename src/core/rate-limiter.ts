@@ -47,11 +47,31 @@ export class RateLimiter {
   }
 
   // Get next reset time (start of next day)
-  getNextResetTime(): Date {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    return tomorrow;
+  getNextResetTime(timezone: string = 'America/New_York'): Date {
+    // Get current time in the target timezone
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    });
+    
+    const parts = formatter.formatToParts(now);
+    const year = parseInt(parts.find(p => p.type === 'year')?.value || '0', 10);
+    const month = parseInt(parts.find(p => p.type === 'month')?.value || '0', 10);
+    const day = parseInt(parts.find(p => p.type === 'day')?.value || '0', 10);
+    
+    // Create date for tomorrow in the target timezone
+    const tomorrowInTimezone = new Date(year, month - 1, day + 1, 0, 0, 0);
+    
+    console.log(`[RateLimiter] Next reset time in ${timezone}: ${tomorrowInTimezone.toISOString()}`);
+    
+    return tomorrowInTimezone;
   }
 
   // Validate campaign limits against defaults

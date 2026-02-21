@@ -12,6 +12,7 @@ dotenv.config();
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const DRY_RUN = process.env.DRY_RUN === 'true';
+const CALL_COOLDOWN_DAYS = parseInt(process.env.CALL_COOLDOWN_DAYS || '3', 10);
 
 // Rate limits
 const MAX_CALLS_PER_DAY = 50;
@@ -231,8 +232,54 @@ export class CallEngine {
 
     const calledToday = new Set(todaysCalls?.map(c => c.prospect_id) || []);
     
+    // Check for prospects called in the last N days (cooldown period)
+    const cooldownDate = new Date();
+    cooldownDate.setDate(cooldownDate.getDate() - CALL_COOLDOWN_DAYS);
+    const cooldownDateStr = cooldownDate.toISOString();
+    
+    console.log(`[CallEngine.getProspectsForCalling] Checking cooldown for calls since ${cooldownDateStr}`);
+    
+    const { data: recentCalls } = await this.supabase
+      .from('call_logs')
+      .select('prospect_id, outcome, callback_at')
+      .in('prospect_id', prospectIds)
+      .gte('created_at', cooldownDateStr)
+      .lt('created_at', `${today}T00:00:00Z`); // Exclude today's calls (already filtered)
+    
+    // Build a map of prospect_id -> most recent call info
+    const recentCallsMap = new Map<string, { outcome: string; callbackAt?: string }>();
+    recentCalls?.forEach(call => {
+      // Keep the most recent call for each prospect
+      recentCallsMap.set(call.prospect_id, {
+        outcome: call.outcome,
+        callbackAt: call.callback_at,
+      });
+    });
+    
+    const now = new Date().toISOString();
+    
     const availableProspects = prospects
-      ?.filter(p => !calledToday.has(p.id))
+      ?.filter(p => {
+        // Filter out if called today
+        if (calledToday.has(p.id)) {
+          return false;
+        }
+        
+        // Check if in cooldown period
+        const recentCall = recentCallsMap.get(p.id);
+        if (recentCall) {
+          // Exception: if outcome is 'callback' and callback_at is due, allow the call
+          if (recentCall.outcome === 'callback' && recentCall.callbackAt && recentCall.callbackAt <= now) {
+            console.log(`[CallEngine.getProspectsForCalling] Prospect ${p.id} has callback due, including`);
+            return true;
+          }
+          
+          console.log(`[CallEngine.getProspectsForCalling] Prospect ${p.id} called recently (${recentCall.outcome}), skipping`);
+          return false;
+        }
+        
+        return true;
+      })
       .map(p => {
         const nameParts = (p.name || '').split(' ');
         return {
@@ -548,18 +595,12 @@ export class CallEngine {
   private async createCallLog(prospect: ProspectForCall): Promise<string> {
     console.log('[CallEngine.createCallLog] Creating call log for prospect:', prospect.id);
 
-    if (this.config.dryRun) {
-      const mockId = `dry_run_${Date.now()}`;
-      console.log('[CallEngine.createCallLog] DRY RUN - Mock log ID:', mockId);
-      return mockId;
-    }
-
     const { data, error } = await this.supabase
       .from('call_logs')
       .insert({
         prospect_id: prospect.id,
         campaign_id: prospect.campaignId,
-        status: 'initiated',
+        status: this.config.dryRun ? 'dry_run' : 'initiated',
         direction: 'outbound',
       })
       .select('id')
@@ -570,7 +611,7 @@ export class CallEngine {
       throw new Error('Failed to create call log: ' + error.message);
     }
 
-    console.log('[CallEngine.createCallLog] Created:', data.id);
+    console.log(`[CallEngine.createCallLog] Created: ${data.id} ${this.config.dryRun ? '(DRY_RUN)' : ''}`);
     return data.id;
   }
 
@@ -579,11 +620,6 @@ export class CallEngine {
    */
   private async updateCallLog(logId: string, updates: Record<string, any>): Promise<void> {
     console.log('[CallEngine.updateCallLog] Updating log:', logId, 'with:', Object.keys(updates));
-
-    if (this.config.dryRun) {
-      console.log('[CallEngine.updateCallLog] DRY RUN - Skipping update');
-      return;
-    }
 
     const { error } = await this.supabase
       .from('call_logs')
