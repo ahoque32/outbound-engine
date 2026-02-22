@@ -353,15 +353,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     if (existingLog) {
-      await fetch(
+      const patchRes = await fetch(
         `${SUPABASE_URL}/rest/v1/call_logs?id=eq.${existingLog.id}`,
         { method: 'PATCH', headers: sbHeaders, body: JSON.stringify(updateData) }
       );
+      console.log(`[post-call-webhook] Supabase PATCH: ${patchRes.status} ${(await patchRes.text()).substring(0, 200)}`);
     } else {
-      await fetch(
+      const insertRes = await fetch(
         `${SUPABASE_URL}/rest/v1/call_logs`,
         { method: 'POST', headers: sbHeaders, body: JSON.stringify(updateData) }
       );
+      const insertText = await insertRes.text();
+      console.log(`[post-call-webhook] Supabase INSERT: ${insertRes.status} ${insertText.substring(0, 300)}`);
+      if (!insertRes.ok) {
+        console.error(`[post-call-webhook] INSERT FAILED: ${insertText}`);
+      }
     }
 
     // ─── Auto-Book if prospect agreed ───────────────────────────
