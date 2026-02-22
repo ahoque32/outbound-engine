@@ -531,13 +531,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       outcome: booking.outcome,
       booked: booking.booked,
       appointment_id: appointmentResult?.id || null,
-      ghl_debug: { key_prefix: GHL_API_KEY.substring(0, 15), location: GHL_LOCATION_ID, calendar: GHL_CALENDAR_ID, user: GHL_USER_ID },
     });
   } catch (error: any) {
     console.error('[post-call-webhook] Error:', error);
     res.status(500).json({ error: error.message });
   }
 }
-// forced redeploy 1771797225
-// redeploy 1771797455
-// Sun Feb 22 17:05:45 EST 2026
