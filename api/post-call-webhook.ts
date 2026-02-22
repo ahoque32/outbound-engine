@@ -135,23 +135,44 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
   };
   let normalizedText = fullText;
   
-  // Handle compound numbers like "nine thirty" → "9:30", "twenty-fourth" → "24th"
-  // First handle ordinals: "twenty-fourth" → "24"
-  const ordinalMap: Record<string, string> = {
-    'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
-    'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10',
-    'eleventh': '11', 'twelfth': '12', 'thirteenth': '13', 'fourteenth': '14',
-    'fifteenth': '15', 'sixteenth': '16', 'seventeenth': '17', 'eighteenth': '18',
-    'nineteenth': '19', 'twentieth': '20', 'thirtieth': '30', 'thirty-first': '31',
+  // Handle compound numbers like "nine thirty" → "9:30"
+  // IMPORTANT: Handle compound ordinals BEFORE single ordinals to avoid "twenty-fourth" → "20-4"
+  
+  // Build compound ordinals first (twenty-first, twenty-fourth, etc)
+  const ordinalMap: Record<string, string> = {};
+  const tensOnes: Record<string, string> = {
+    'twenty': '2', 'thirty': '3', 'forty': '4', 'fifty': '5'
   };
-  // "twenty-first" through "twenty-ninth", "thirty-first"
-  for (const [tens, tVal] of [['twenty', '2'], ['thirty', '3']] as const) {
-    for (const [ones, oVal] of Object.entries(ordinalMap).filter(([k]) => parseInt(ordinalMap[k]) <= 9)) {
+  const onesOnes: Record<string, string> = {
+    'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
+    'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9'
+  };
+  
+  // Add compound ordinals: twenty-first, twenty-fourth, thirty-first
+  for (const [tens, tVal] of Object.entries(tensOnes)) {
+    for (const [ones, oVal] of Object.entries(onesOnes)) {
       ordinalMap[`${tens}-${ones}`] = `${tVal}${oVal}`;
       ordinalMap[`${tens} ${ones}`] = `${tVal}${oVal}`;
     }
   }
-  for (const [word, digit] of Object.entries(ordinalMap)) {
+  // Add single ordinals
+  for (const [ones, oVal] of Object.entries(onesOnes)) ordinalMap[ones] = oVal;
+  ordinalMap['tenth'] = '10';
+  ordinalMap['eleventh'] = '11';
+  ordinalMap['twelfth'] = '12';
+  ordinalMap['thirteenth'] = '13';
+  ordinalMap['fourteenth'] = '14';
+  ordinalMap['fifteenth'] = '15';
+  ordinalMap['sixteenth'] = '16';
+  ordinalMap['seventeenth'] = '17';
+  ordinalMap['eighteenth'] = '18';
+  ordinalMap['nineteenth'] = '19';
+  ordinalMap['twentieth'] = '20';
+  ordinalMap['thirtieth'] = '30';
+  
+  // Sort by length (longest first) so "twenty-fourth" replaces before "fourth"
+  const sortedOrdinals = Object.entries(ordinalMap).sort((a, b) => b[0].length - a[0].length);
+  for (const [word, digit] of sortedOrdinals) {
     normalizedText = normalizedText.replace(new RegExp(word, 'gi'), digit);
   }
   
