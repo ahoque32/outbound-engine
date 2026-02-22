@@ -435,6 +435,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (booking.booked && GHL_API_KEY) {
       console.log(`[post-call-webhook] 🎯 BOOKING DETECTED — processing GHL booking...`);
       console.log(`[post-call-webhook] Time: ${booking.selectedTime}, Email: ${booking.confirmedEmail}, Name: ${booking.confirmedName}`);
+      console.log(`[post-call-webhook] GHL config: key=${GHL_API_KEY.substring(0, 10)}..., loc=${GHL_LOCATION_ID}, cal=${GHL_CALENDAR_ID}, user=${GHL_USER_ID}`);
 
       try {
         const contactId = await findOrCreateGHLContact({
