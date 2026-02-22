@@ -225,9 +225,17 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
           if (hour <= 7) hour += 12;
         }
 
-        const bookDate = explicitDate ? new Date(explicitDate) : new Date(now);
-        if (!explicitDate) bookDate.setDate(bookDate.getDate() + dayOffset);
+        let bookDate: Date;
+        if (explicitDate) {
+          bookDate = new Date(explicitDate);
+        } else if (dayOffset > 0) {
+          bookDate = new Date(now);
+          bookDate.setDate(bookDate.getDate() + dayOffset);
+        } else {
+          continue; // No valid date found in this match
+        }
         bookDate.setHours(hour, minutes, 0, 0);
+        console.log(`[extractBookedTime] Parsed: day=${dayOffset}, hour=${hour}, min=${minutes}, explicit=${!!explicitDate}, result=${bookDate.toISOString()}`);
         return bookDate.toISOString();
       }
     }
