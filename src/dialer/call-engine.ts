@@ -368,119 +368,52 @@ export class CallEngine {
       // Step 1: Make the call with AMD
       console.log('[CallEngine.callProspect] Step 1: Initiating call with AMD...');
       
-      let twilioResult: TwilioCallResult;
+      // Use ElevenLabs native Twilio integration for outbound calls
+      // ElevenLabs handles: Twilio media bridge, STT, LLM (Gemini Flash), TTS, AMD
       
       if (this.config.dryRun) {
-        console.log('[CallEngine.callProspect] DRY RUN - Simulating Twilio call');
-        twilioResult = {
-          success: true,
-          callSid: `DRY_RUN_${Date.now()}`,
-          status: 'in-progress',
-          answeredBy: Math.random() > 0.5 ? 'human' : 'machine',
-        };
-      } else {
-        // In production, we'd generate the appropriate TwiML URL
-        // For now, we use the ElevenLabs integration
-        const conversationUrl = await voiceAgent.createConversationUrl({
+        console.log('[CallEngine.callProspect] DRY RUN - Simulating call');
+        const simulation = await voiceAgent.simulateConversation({
           firstName: prospect.firstName,
           company: prospect.company,
-          observation: prospectData.observation || '',
         });
 
-        if (!conversationUrl.success || !conversationUrl.url) {
-          throw new Error('Failed to create conversation URL: ' + conversationUrl.error);
-        }
-
-        twilioResult = await twilioClient.makeCall({
-          to: prospect.phone,
-          twiml: twilioClient.generateElevenLabsTwiML(conversationUrl.url),
-          machineDetection: 'DetectMessageEnd',
-          record: true,
-        });
-      }
-
-      if (!twilioResult.success) {
-        throw new Error('Failed to initiate call: ' + twilioResult.error);
-      }
-
-      callResult.callSid = twilioResult.callSid;
-      callResult.status = 'ringing';
-      
-      console.log('[CallEngine.callProspect] Call initiated:', twilioResult.callSid);
-
-      // Step 2: Wait for AMD result and handle accordingly
-      console.log('[CallEngine.callProspect] Step 2: Waiting for AMD result...');
-      
-      await this.updateCallLog(callLogId, {
-        twilio_call_sid: twilioResult.callSid,
-        status: 'ringing',
-      });
-
-      // Check AMD result
-      const amdResult = await voicemailHandler.checkAMDResult(twilioResult.callSid!);
-      callResult.amdResult = amdResult.result;
-      
-      console.log('[CallEngine.callProspect] AMD result:', amdResult.result);
-
-      // Step 3: Handle based on AMD result
-      if (amdResult.result === 'human') {
-        console.log('[CallEngine.callProspect] Step 3: Human detected, connecting to voice agent...');
+        callResult.callSid = `DRY_RUN_${Date.now()}`;
         callResult.status = 'answered';
-        
-        // In DRY_RUN mode, simulate the conversation
-        if (this.config.dryRun) {
-          console.log('[CallEngine.callProspect] DRY RUN - Simulating conversation');
-          const conversation = await voiceAgent.simulateConversation({
-            firstName: prospect.firstName,
-            company: prospect.company,
-          });
+        callResult.outcome = simulation.outcome;
+        callResult.transcript = JSON.stringify(simulation.transcript);
+        callResult.notes = simulation.notes;
 
-          callResult.outcome = conversation.outcome;
-          callResult.transcript = JSON.stringify(conversation.transcript);
-          callResult.notes = conversation.notes;
-          
-          if (conversation.outcome === 'callback') {
-            callResult.callbackAt = conversation.callbackTime;
-          }
-
-          // Track consecutive not interested
-          if (conversation.outcome === 'not_interested') {
-            this.consecutiveNotInterested++;
-          } else {
-            this.consecutiveNotInterested = 0;
-          }
+        if (simulation.outcome === 'not_interested') {
+          this.consecutiveNotInterested++;
         } else {
-          // In production, the conversation happens via ElevenLabs + Twilio Stream
-          // We would poll for the conversation result or receive it via webhook
-          // For now, mark as in-progress
-          callResult.outcome = 'interested'; // Placeholder
-          callResult.notes = 'Connected to voice agent - conversation in progress';
+          this.consecutiveNotInterested = 0;
         }
-        
-      } else if (amdResult.result === 'machine') {
-        console.log('[CallEngine.callProspect] Step 3: Machine detected, leaving voicemail...');
-        callResult.status = 'voicemail';
-        
-        const voicemailResult = await voicemailHandler.deliverVoicemail(
-          twilioResult.callSid!,
-          prospectData,
-          templateId
-        );
-
-        callResult.outcome = voicemailResult.delivered ? 'voicemail' : 'no_answer';
-        callResult.notes = voicemailResult.delivered 
-          ? 'Voicemail delivered successfully'
-          : 'Failed to deliver voicemail: ' + voicemailResult.error;
-        
-        this.consecutiveNotInterested = 0; // Reset counter
-        
       } else {
-        console.log('[CallEngine.callProspect] Step 3: Unknown/timeout, marking as no answer');
-        callResult.status = 'no_answer';
-        callResult.outcome = 'no_answer';
-        callResult.notes = 'No answer or AMD timeout';
-        this.consecutiveNotInterested = 0;
+        // Make the call via ElevenLabs outbound API
+        const outboundResult = await voiceAgent.makeOutboundCall(prospect.phone);
+
+        if (!outboundResult.success) {
+          throw new Error('Failed to initiate call: ' + outboundResult.error);
+        }
+
+        callResult.callSid = outboundResult.callSid;
+        callResult.status = 'answered';
+        callResult.notes = `ElevenLabs conversation: ${outboundResult.conversationId}`;
+
+        console.log('[CallEngine.callProspect] Call initiated via ElevenLabs');
+        console.log('[CallEngine.callProspect] Conversation ID:', outboundResult.conversationId);
+        console.log('[CallEngine.callProspect] Call SID:', outboundResult.callSid);
+
+        // ElevenLabs handles the full conversation (Ava talks to prospect)
+        // Outcome will be determined via post-call webhook or polling
+        callResult.outcome = 'interested'; // Default — webhook will update
       }
+
+      await this.updateCallLog(callLogId, {
+        twilio_call_sid: callResult.callSid,
+        status: callResult.status,
+      });
 
       callResult.success = true;
       callResult.duration = Math.floor((Date.now() - startTime) / 1000);
