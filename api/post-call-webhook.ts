@@ -129,11 +129,56 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
   const wordToNum: Record<string, string> = {
     'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
     'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
-    'eleven': '11', 'twelve': '12',
+    'eleven': '11', 'twelve': '12', 'thirteen': '13', 'fourteen': '14',
+    'fifteen': '15', 'sixteen': '16', 'seventeen': '17', 'eighteen': '18',
+    'nineteen': '19', 'twenty': '20', 'thirty': '30', 'forty': '40', 'fifty': '50',
   };
   let normalizedText = fullText;
+  
+  // Handle compound numbers like "nine thirty" → "9:30", "twenty-fourth" → "24th"
+  // First handle ordinals: "twenty-fourth" → "24"
+  const ordinalMap: Record<string, string> = {
+    'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'fifth': '5',
+    'sixth': '6', 'seventh': '7', 'eighth': '8', 'ninth': '9', 'tenth': '10',
+    'eleventh': '11', 'twelfth': '12', 'thirteenth': '13', 'fourteenth': '14',
+    'fifteenth': '15', 'sixteenth': '16', 'seventeenth': '17', 'eighteenth': '18',
+    'nineteenth': '19', 'twentieth': '20', 'thirtieth': '30', 'thirty-first': '31',
+  };
+  // "twenty-first" through "twenty-ninth", "thirty-first"
+  for (const [tens, tVal] of [['twenty', '2'], ['thirty', '3']] as const) {
+    for (const [ones, oVal] of Object.entries(ordinalMap).filter(([k]) => parseInt(ordinalMap[k]) <= 9)) {
+      ordinalMap[`${tens}-${ones}`] = `${tVal}${oVal}`;
+      ordinalMap[`${tens} ${ones}`] = `${tVal}${oVal}`;
+    }
+  }
+  for (const [word, digit] of Object.entries(ordinalMap)) {
+    normalizedText = normalizedText.replace(new RegExp(word, 'gi'), digit);
+  }
+  
+  // Handle "nine thirty" → "9:30" (hour + minutes as words)
+  normalizedText = normalizedText.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(thirty|fifteen|forty-five|forty five|twenty|ten|fifty)\b/gi, (_, h, m) => {
+    const hr = wordToNum[h.toLowerCase()] || h;
+    const min = wordToNum[m.toLowerCase().replace(/[-\s]/, '')] || m;
+    return `${hr}:${min}`;
+  });
+  
+  // Now convert remaining single word numbers
   for (const [word, digit] of Object.entries(wordToNum)) {
     normalizedText = normalizedText.replace(new RegExp(`\\b${word}\\b`, 'gi'), digit);
+  }
+  
+  // Handle month names for explicit date references: "February 24" 
+  const monthMap: Record<string, number> = {
+    'january': 0, 'february': 1, 'march': 2, 'april': 3, 'may': 4, 'june': 5,
+    'july': 6, 'august': 7, 'september': 8, 'october': 9, 'november': 10, 'december': 11,
+  };
+  const explicitDateMatch = normalizedText.match(/\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})\b/i);
+  let explicitDate: Date | null = null;
+  if (explicitDateMatch) {
+    const month = monthMap[explicitDateMatch[1].toLowerCase()];
+    const day = parseInt(explicitDateMatch[2]);
+    explicitDate = new Date(now.getFullYear(), month, day);
+    if (explicitDate < now) explicitDate.setFullYear(now.getFullYear() + 1);
   }
 
   // Find the time the user agreed to
@@ -162,7 +207,7 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
 
       // Find the hour
       const hourMatch = matchText.match(/(\d{1,2})(?::(\d{2}))?/);
-      if (hourMatch && dayOffset > 0) {
+      if (hourMatch && (dayOffset > 0 || explicitDate)) {
         let hour = parseInt(hourMatch[1]);
         const minutes = hourMatch[2] ? parseInt(hourMatch[2]) : 0;
 
@@ -170,15 +215,15 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
         if (matchText.includes('pm') || matchText.includes('p.m.') || matchText.includes('afternoon') || matchText.includes('evening')) {
           if (hour < 12) hour += 12;
         } else if (matchText.includes('morning') && hour < 6) {
-          hour += 12; // "morning at 9" = 9 AM, no change needed for most cases
+          hour += 12;
         }
         // If no AM/PM specified, assume: <=7 = PM, 8-11 = AM
         if (!matchText.includes('am') && !matchText.includes('pm') && !matchText.includes('morning') && !matchText.includes('afternoon') && !matchText.includes('evening')) {
           if (hour <= 7) hour += 12;
         }
 
-        const bookDate = new Date(now);
-        bookDate.setDate(bookDate.getDate() + dayOffset);
+        const bookDate = explicitDate ? new Date(explicitDate) : new Date(now);
+        if (!explicitDate) bookDate.setDate(bookDate.getDate() + dayOffset);
         bookDate.setHours(hour, minutes, 0, 0);
         return bookDate.toISOString();
       }
