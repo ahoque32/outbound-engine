@@ -66,6 +66,30 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   date date DEFAULT current_date
 );
 
+-- Call logs table (post-call webhook data from ElevenLabs)
+CREATE TABLE IF NOT EXISTS call_logs (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  conversation_id text UNIQUE NOT NULL,
+  prospect_id uuid REFERENCES prospects(id),
+  prospect_phone text,
+  prospect_name text,
+  call_sid text,
+  status text DEFAULT 'completed',
+  outcome text,
+  duration_seconds int,
+  transcript jsonb,
+  summary text,
+  booking_made boolean DEFAULT false,
+  callback_requested boolean DEFAULT false,
+  callback_time timestamptz,
+  elevenlabs_data jsonb,
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS call_logs_prospect_id ON call_logs(prospect_id);
+CREATE INDEX IF NOT EXISTS call_logs_outcome ON call_logs(outcome);
+CREATE INDEX IF NOT EXISTS call_logs_created_at ON call_logs(created_at);
+
 -- Unique index for rate limit lookups
 CREATE UNIQUE INDEX IF NOT EXISTS rate_limits_channel_inbox_date 
   ON rate_limits(channel, inbox_email, date);
