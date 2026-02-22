@@ -118,11 +118,22 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
   // Common patterns: "Tuesday morning at 9", "Thursday at 5", "Friday afternoon"
   const dayMap: Record<string, number> = {};
   const now = new Date();
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 0; i <= 7; i++) {
     const d = new Date(now);
     d.setDate(d.getDate() + i);
     const dayName = d.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-    dayMap[dayName] = i;
+    if (!dayMap[dayName]) dayMap[dayName] = i; // First occurrence wins (closest day)
+  }
+
+  // Convert word numbers to digits
+  const wordToNum: Record<string, string> = {
+    'one': '1', 'two': '2', 'three': '3', 'four': '4', 'five': '5',
+    'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'ten': '10',
+    'eleven': '11', 'twelve': '12',
+  };
+  let normalizedText = fullText;
+  for (const [word, digit] of Object.entries(wordToNum)) {
+    normalizedText = normalizedText.replace(new RegExp(`\\b${word}\\b`, 'gi'), digit);
   }
 
   // Find the time the user agreed to
@@ -134,7 +145,7 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
   ];
 
   for (const pattern of timePatterns) {
-    const matches = [...fullText.matchAll(pattern)];
+    const matches = [...normalizedText.matchAll(pattern)];
     if (matches.length > 0) {
       // Take the last match (most likely the confirmed one)
       const match = matches[matches.length - 1];
