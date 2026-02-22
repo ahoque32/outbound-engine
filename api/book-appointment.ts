@@ -43,13 +43,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const { first_name, last_name, email, phone, company, preferred_time } = req.body;
+    const { first_name, last_name, email, phone, company, company_name, preferred_time } = req.body;
+    // Support company_name from dynamic variables, fall back to company
+    const companyValue = company_name || company;
 
     if (!first_name || !phone || !preferred_time) {
       return res.status(400).json({ error: 'Missing required: first_name, phone, preferred_time' });
     }
 
-    const contactId = await findOrCreateContact({ firstName: first_name, lastName: last_name, email, phone, company });
+    const contactId = await findOrCreateContact({ firstName: first_name, lastName: last_name, email, phone, company: companyValue });
     if (!contactId) return res.status(500).json({ error: 'Failed to create contact' });
 
     const startTime = new Date(preferred_time).toISOString();
@@ -64,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         contactId,
         startTime,
         endTime,
-        title: `Discovery Call - ${first_name} ${last_name || ''} (${company || 'N/A'})`,
+        title: `Discovery Call - ${first_name} ${last_name || ''} (${companyValue || 'N/A'})`,
         appointmentStatus: 'confirmed',
         assignedUserId: GHL_USER_ID,
         notes: `Booked by Ava (AI) during cold call. Phone: ${phone}`,

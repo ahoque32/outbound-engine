@@ -68,8 +68,15 @@ export class VoiceAgent {
    * Make an outbound call via ElevenLabs native Twilio integration
    * ElevenLabs handles: Twilio media bridge, STT, LLM (Gemini Flash), TTS
    */
-  async makeOutboundCall(toNumber: string): Promise<OutboundCallResult> {
-    console.log(`[VoiceAgent.makeOutboundCall] Calling ${toNumber} via ElevenLabs`);
+  async makeOutboundCall(
+    toNumber: string,
+    options?: {
+      agentIdOverride?: string;
+      prospectData?: Record<string, string>;
+    }
+  ): Promise<OutboundCallResult> {
+    const agentId = options?.agentIdOverride || this.agentId;
+    console.log(`[VoiceAgent.makeOutboundCall] Calling ${toNumber} via ElevenLabs (agent: ${agentId})`);
 
     if (DRY_RUN) {
       console.log('[VoiceAgent.makeOutboundCall] DRY RUN — simulating call');
@@ -81,17 +88,26 @@ export class VoiceAgent {
     }
 
     try {
+      const body: any = {
+        agent_id: agentId,
+        agent_phone_number_id: this.phoneNumberId,
+        to_number: toNumber,
+      };
+
+      // Pass prospect data as dynamic variables
+      if (options?.prospectData) {
+        body.conversation_initiation_client_data = {
+          dynamic_variables: options.prospectData,
+        };
+      }
+
       const response = await fetch(`${this.baseUrl}/convai/twilio/outbound-call`, {
         method: 'POST',
         headers: {
           'xi-api-key': this.apiKey,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          agent_id: this.agentId,
-          agent_phone_number_id: this.phoneNumberId,
-          to_number: toNumber,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {
