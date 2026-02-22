@@ -178,7 +178,10 @@ function extractBookedTime(transcript: Array<{ role: string; message: string }>)
     const month = monthMap[explicitDateMatch[1].toLowerCase()];
     const day = parseInt(explicitDateMatch[2]);
     explicitDate = new Date(now.getFullYear(), month, day);
-    if (explicitDate < now) explicitDate.setFullYear(now.getFullYear() + 1);
+    // Only bump year if the date is more than 7 days in the past (not just slightly behind UTC)
+    const sevenDaysAgo = new Date(now);
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    if (explicitDate < sevenDaysAgo) explicitDate.setFullYear(now.getFullYear() + 1);
   }
 
   // Find the time the user agreed to
@@ -446,6 +449,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (contactId && booking.selectedTime) {
           appointmentResult = await bookGHLAppointment(contactId, booking, { ...dynamicVars, phone: phoneNumber }, variantId);
+          console.log(`[post-call-webhook] GHL appointment response: ${JSON.stringify(appointmentResult).substring(0, 300)}`);
           console.log(`[post-call-webhook] ✅ Appointment booked: ${appointmentResult?.id}`);
 
           // Update call log with booking info
