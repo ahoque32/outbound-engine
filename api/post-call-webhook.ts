@@ -1,6 +1,4 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
-
 // Inline variant lookup to avoid module issues in Vercel serverless context
 import variants from '../variants.json';
 
@@ -326,14 +324,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const booking = analyzeTranscript(transcript, dynamicVars, analysis);
     console.log(`[post-call-webhook] Conversation ${conversation_id} — variant: ${variantId}, outcome: ${booking.outcome}, booked: ${booking.booked}`);
 
-    // Log to Supabase
-    const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+    // Log to Supabase via REST API
+    const sbHeaders = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation',
+    };
 
-    const { data: existingLog } = await supabase
-      .from('call_logs')
-      .select('id')
-      .eq('conversation_id', conversation_id)
-      .single();
+    // Check for existing log
+    const existingRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}&limit=1`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    const existingLogs = await existingRes.json() as any[];
+    const existingLog = existingLogs?.length > 0 ? existingLogs[0] : null;
 
     const updateData: Record<string, any> = {
       conversation_id,
@@ -348,9 +353,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     if (existingLog) {
-      await supabase.from('call_logs').update(updateData).eq('id', existingLog.id);
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/call_logs?id=eq.${existingLog.id}`,
+        { method: 'PATCH', headers: sbHeaders, body: JSON.stringify(updateData) }
+      );
     } else {
-      await supabase.from('call_logs').insert(updateData);
+      await fetch(
+        `${SUPABASE_URL}/rest/v1/call_logs`,
+        { method: 'POST', headers: sbHeaders, body: JSON.stringify(updateData) }
+      );
     }
 
     // ─── Auto-Book if prospect agreed ───────────────────────────
@@ -376,25 +387,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           console.log(`[post-call-webhook] ✅ Appointment booked: ${appointmentResult?.id}`);
 
           // Update call log with booking info
-          await supabase.from('call_logs').update({
-            booking_made: true,
-            ghl_contact_id: contactId,
-            ghl_appointment_id: appointmentResult?.id || null,
-            booked_time: booking.selectedTime,
-          }).eq('conversation_id', conversation_id);
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}`,
+            { method: 'PATCH', headers: sbHeaders, body: JSON.stringify({
+              booking_made: true,
+              ghl_contact_id: contactId,
+              ghl_appointment_id: appointmentResult?.id || null,
+              booked_time: booking.selectedTime,
+            })}
+          );
         } else if (contactId && !booking.selectedTime) {
           console.log('[post-call-webhook] ⚠️ Booking detected but no time extracted — contact created/updated, manual booking needed');
-          await supabase.from('call_logs').update({
-            ghl_contact_id: contactId,
-            notes: 'Booking detected but time extraction failed — manual follow-up needed',
-          }).eq('conversation_id', conversation_id);
+          await fetch(
+            `${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}`,
+            { method: 'PATCH', headers: sbHeaders, body: JSON.stringify({
+              ghl_contact_id: contactId,
+              notes: 'Booking detected but time extraction failed — manual follow-up needed',
+            })}
+          );
         }
       } catch (ghlError: any) {
         console.error('[post-call-webhook] GHL booking error:', ghlError.message);
         // Don't fail the webhook — log the error and continue
-        await supabase.from('call_logs').update({
-          notes: `GHL booking failed: ${ghlError.message}`,
-        }).eq('conversation_id', conversation_id);
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}`,
+          { method: 'PATCH', headers: sbHeaders, body: JSON.stringify({
+            notes: `GHL booking failed: ${ghlError.message}`,
+          })}
+        );
       }
     }
 
