@@ -1,63 +1,88 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
 
-async function supabaseSelect(query: string) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/call_logs?${query}`, {
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': `Bearer ${SUPABASE_KEY}`,
-    },
-  });
-  return res.json();
+import variants from '../variants.json';
+
+function getVariantName(id: string): string {
+  return variants.variants.find((v: any) => v.id === id)?.name || id || 'unknown';
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
+  const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+  const by = req.query.by as string | undefined;
+
   try {
-    // Fetch all call logs (select only needed fields)
-    const logs = await supabaseSelect('select=outcome,duration_seconds,booking_made,created_at&order=created_at.desc');
+    if (by === 'variant') {
+      const { data, error } = await supabase
+        .from('call_logs')
+        .select('agent_variant, outcome, duration_seconds');
 
-    if (!Array.isArray(logs)) {
-      return res.status(500).json({ error: 'Failed to query call_logs' });
+      if (error) throw error;
+
+      // Group by variant
+      const grouped: Record<string, any[]> = {};
+      for (const row of data || []) {
+        const key = row.agent_variant || 'unknown';
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(row);
+      }
+
+      const variantStats = Object.entries(grouped).map(([id, rows]) => {
+        const total = rows.length;
+        const booked = rows.filter(r => r.outcome === 'booked').length;
+        const interested = rows.filter(r => r.outcome === 'interested').length;
+        const not_interested = rows.filter(r => r.outcome === 'not_interested').length;
+        const durations = rows.filter(r => r.duration_seconds).map(r => r.duration_seconds);
+        const avg_duration = durations.length > 0
+          ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length)
+          : 0;
+
+        return {
+          id,
+          name: getVariantName(id),
+          total,
+          booked,
+          interested,
+          not_interested,
+          booking_rate: total > 0 ? Math.round((booked / total) * 10000) / 100 : 0,
+          avg_duration,
+        };
+      });
+
+      return res.json({ variants: variantStats });
     }
 
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-    const weekStart = new Date(now.getTime() - now.getDay() * 86400000);
-    weekStart.setHours(0, 0, 0, 0);
-    const weekStartISO = weekStart.toISOString();
+    // Default: overall stats
+    const { data, error } = await supabase
+      .from('call_logs')
+      .select('outcome, duration_seconds, status');
 
-    const today = logs.filter(l => l.created_at >= todayStart);
-    const thisWeek = logs.filter(l => l.created_at >= weekStartISO);
+    if (error) throw error;
 
-    // Outcome breakdown
-    const outcomes: Record<string, number> = {};
-    for (const l of logs) {
-      outcomes[l.outcome || 'unknown'] = (outcomes[l.outcome || 'unknown'] || 0) + 1;
-    }
-
-    // Average duration
-    const durations = logs.filter(l => l.duration_seconds != null).map(l => l.duration_seconds);
-    const avgDuration = durations.length > 0 ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length) : 0;
-
-    // Booking rate
-    const booked = logs.filter(l => l.booking_made).length;
-    const bookingRate = logs.length > 0 ? Math.round((booked / logs.length) * 10000) / 100 : 0;
+    const rows = data || [];
+    const total = rows.length;
+    const completed = rows.filter(r => r.status === 'completed').length;
+    const booked = rows.filter(r => r.outcome === 'booked').length;
+    const interested = rows.filter(r => r.outcome === 'interested').length;
+    const durations = rows.filter(r => r.duration_seconds).map(r => r.duration_seconds);
+    const avg_duration = durations.length > 0
+      ? Math.round(durations.reduce((a: number, b: number) => a + b, 0) / durations.length)
+      : 0;
 
     res.json({
-      total_calls: logs.length,
-      calls_today: today.length,
-      calls_this_week: thisWeek.length,
-      outcomes,
-      booking_rate_percent: bookingRate,
-      bookings: booked,
-      avg_duration_seconds: avgDuration,
+      total,
+      completed,
+      booked,
+      interested,
+      booking_rate: completed > 0 ? Math.round((booked / completed) * 10000) / 100 : 0,
+      avg_duration,
     });
   } catch (error: any) {
-    console.error('[call-stats] Error:', error);
     res.status(500).json({ error: error.message });
   }
 }

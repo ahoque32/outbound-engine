@@ -4,8 +4,6 @@ const GHL_API_KEY = process.env.GHL_API_KEY || '';
 const GHL_LOCATION_ID = process.env.GHL_LOCATION_ID || '';
 const GHL_CALENDAR_ID = process.env.GHL_CALENDAR_ID || '';
 const GHL_USER_ID = process.env.GHL_USER_ID || '';
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || '';
 
 function ghlHeaders() {
   return {
@@ -45,13 +43,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const { first_name, last_name, email, phone, company, preferred_time, conversation_id } = req.body;
+    const { first_name, last_name, email, phone, company, company_name, preferred_time } = req.body;
+    // Support company_name from dynamic variables, fall back to company
+    const companyValue = company_name || company;
 
     if (!first_name || !phone || !preferred_time) {
       return res.status(400).json({ error: 'Missing required: first_name, phone, preferred_time' });
     }
 
-    const contactId = await findOrCreateContact({ firstName: first_name, lastName: last_name, email, phone, company });
+    const contactId = await findOrCreateContact({ firstName: first_name, lastName: last_name, email, phone, company: companyValue });
     if (!contactId) return res.status(500).json({ error: 'Failed to create contact' });
 
     const startTime = new Date(preferred_time).toISOString();
@@ -66,7 +66,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         contactId,
         startTime,
         endTime,
-        title: `Discovery Call - ${first_name} ${last_name || ''} (${company || 'N/A'})`,
+        title: `Discovery Call - ${first_name} ${last_name || ''} (${companyValue || 'N/A'})`,
         appointmentStatus: 'confirmed',
         assignedUserId: GHL_USER_ID,
         notes: `Booked by Ava (AI) during cold call. Phone: ${phone}`,
@@ -76,23 +76,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const aptData = await aptRes.json() as any;
     const dateStr = new Date(preferred_time).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
     const timeStr = new Date(preferred_time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-
-    // Update call_logs if conversation_id provided
-    if (conversation_id && SUPABASE_URL && SUPABASE_KEY) {
-      try {
-        await fetch(`${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}`, {
-          method: 'PATCH',
-          headers: {
-            'apikey': SUPABASE_KEY,
-            'Authorization': `Bearer ${SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ booking_made: true, outcome: 'booked' }),
-        });
-      } catch (e) {
-        console.error('[book-appointment] Failed to update call_logs:', e);
-      }
-    }
 
     res.json({
       success: true,

@@ -1,0 +1,43 @@
+{
+  "variants": [
+    {
+      "id": "ava-warm",
+      "agentId": "agent_2401kj14s2xveagtqe97g6w7pbh3",
+      "name": "Ava - Warm & Consultative",
+      "voice": "Hope",
+      "style": "warm, friendly, consultative",
+      "weight": 1.0,
+      "enabled": true
+    },
+    {
+      "id": "ava-direct",
+      "agentId": "agent_9501kj3brjqnf7fr2tggxs5gk6fd",
+      "name": "Ava - Direct & Confident",
+      "voice": "Hope",
+      "style": "direct, fast-paced, value-first",
+      "weight": 1.0,
+      "enabled": true
+    },
+    {
+      "id": "chris-charming",
+      "agentId": "agent_7701kj3brkr2ej9bm440fckngpp8",
+      "name": "Chris - Charming & Down-to-Earth",
+      "voice": "Chris",
+      "style": "charming, casual, genuine",
+      "weight": 1.0,
+      "enabled": true
+    },
+    {
+      "id": "eric-authority",
+      "agentId": "agent_2601kj3brmr0ef9v82phava471wk",
+      "name": "Eric - Smooth & Authoritative",
+      "voice": "Eric",
+      "style": "smooth, professional, social-proof-led",
+      "weight": 1.0,
+      "enabled": true
+    }
+  ],
+  "strategy": "round-robin",
+  "epsilon": 0.2,
+  "minCallsBeforeBandit": 50
+}
