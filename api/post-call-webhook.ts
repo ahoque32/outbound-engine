@@ -286,7 +286,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'POST only' });
 
   try {
-    const { conversation_id, agent_id } = req.body;
+    // ElevenLabs sends { type: "post_call_transcription", data: { conversation_id, ... } }
+    // Also support direct { conversation_id, agent_id } for manual testing
+    const payload = req.body.data || req.body;
+    const conversation_id = payload.conversation_id;
+    const agent_id = payload.agent_id;
 
     if (!conversation_id) {
       return res.status(400).json({ error: 'Missing conversation_id' });
