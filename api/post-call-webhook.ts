@@ -347,6 +347,8 @@ async function bookGHLAppointment(contactId: string, booking: BookingDetails, pr
   const name = booking.confirmedName || `${prospectData.first_name || ''} ${prospectData.last_name || ''}`.trim();
   const company = prospectData.company_name || '';
 
+  console.log(`[bookGHLAppointment] Attempting to book: contact=${contactId}, time=${startTime}, name=${name}`);
+
   const aptRes = await fetch('https://services.leadconnectorhq.com/calendars/events/appointments', {
     method: 'POST',
     headers: ghlHeaders(),
@@ -363,7 +365,15 @@ async function bookGHLAppointment(contactId: string, booking: BookingDetails, pr
     }),
   });
 
-  return await aptRes.json();
+  const aptText = await aptRes.text();
+  console.log(`[bookGHLAppointment] Response: ${aptRes.status} ${aptText.substring(0, 300)}`);
+  
+  if (!aptRes.ok) {
+    console.error(`[bookGHLAppointment] FAILED: ${aptText}`);
+    return null;
+  }
+  
+  return JSON.parse(aptText);
 }
 
 // ─── Main Handler ──────────────────────────────────────────────────
