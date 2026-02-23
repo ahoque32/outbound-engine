@@ -5,6 +5,7 @@ import { voiceAgent, ConversationResult } from './voice-agent';
 import { voicemailHandler, AMDResult, VoicemailDeliveryResult } from './voicemail-handler';
 import { personalizeScript, ProspectData, generateObservation } from './call-script';
 import { handleObjection, detectInterest } from './objection-handler';
+import { selectVariant, VariantConfig } from '../core/ab-router';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -45,6 +46,13 @@ export interface ProspectForCall {
   location?: string;
   timezone?: string;
   observation?: string;
+  // Dynamic variable fields for voice agent personalization
+  email?: string;
+  city?: string;
+  state?: string;
+  productService?: string;
+  specificDetail?: string;
+  desiredBenefit?: string;
 }
 
 export interface CallResult {
@@ -202,13 +210,19 @@ export class CallEngine {
         campaign_id,
         name,
         company,
+        company_name,
         phone,
         website,
         industry,
-        location
+        location,
+        email,
+        state,
+        product_service,
+        specific_detail,
+        desired_benefit
       `)
       .not('phone', 'is', null)
-      .eq('state', 'discovered')
+      .in('state', ['discovered', 'contacted', 'researched'])
       .limit(limit);
 
     if (error) {
@@ -287,11 +301,17 @@ export class CallEngine {
           campaignId: p.campaign_id,
           firstName: nameParts[0] || p.name,
           lastName: nameParts.slice(1).join(' '),
-          company: p.company,
+          company: p.company_name || p.company,
           phone: p.phone,
           website: p.website,
           industry: p.industry,
           location: p.location,
+          email: p.email,
+          city: p.location?.split(',')[0]?.trim(),
+          state: p.state,
+          productService: p.product_service,
+          specificDetail: p.specific_detail,
+          desiredBenefit: p.desired_benefit,
         };
       }) || [];
 
@@ -371,8 +391,28 @@ export class CallEngine {
       // Use ElevenLabs native Twilio integration for outbound calls
       // ElevenLabs handles: Twilio media bridge, STT, LLM (Gemini Flash), TTS, AMD
       
+      // Select A/B variant for this call
+      const variant: VariantConfig = selectVariant();
+      console.log(`[CallEngine.callProspect] A/B variant selected: ${variant.id} (${variant.name}, agent: ${variant.agentId})`);
+
+      // Build dynamic variables for personalization
+      const dynamicVariables: Record<string, string> = {
+        first_name: prospect.firstName || '',
+        last_name: prospect.lastName || '',
+        company_name: prospect.company || '',
+        website: prospect.website || '',
+        city: prospect.city || prospect.location || '',
+        state: prospect.state || '',
+        product_service: prospect.productService || '',
+        specific_detail: prospect.specificDetail || '',
+        desired_benefit: prospect.desiredBenefit || '',
+        email: prospect.email || '',
+      };
+
       if (this.config.dryRun) {
         console.log('[CallEngine.callProspect] DRY RUN - Simulating call');
+        console.log('[CallEngine.callProspect] Would use variant:', variant.id);
+        console.log('[CallEngine.callProspect] Dynamic vars:', JSON.stringify(dynamicVariables));
         const simulation = await voiceAgent.simulateConversation({
           firstName: prospect.firstName,
           company: prospect.company,
@@ -382,7 +422,7 @@ export class CallEngine {
         callResult.status = 'answered';
         callResult.outcome = simulation.outcome;
         callResult.transcript = JSON.stringify(simulation.transcript);
-        callResult.notes = simulation.notes;
+        callResult.notes = `DRY RUN — variant: ${variant.id}. ${simulation.notes}`;
 
         if (simulation.outcome === 'not_interested') {
           this.consecutiveNotInterested++;
@@ -390,8 +430,11 @@ export class CallEngine {
           this.consecutiveNotInterested = 0;
         }
       } else {
-        // Make the call via ElevenLabs outbound API
-        const outboundResult = await voiceAgent.makeOutboundCall(prospect.phone);
+        // Make the call via ElevenLabs outbound API with A/B variant + dynamic variables
+        const outboundResult = await voiceAgent.makeOutboundCall(prospect.phone, {
+          agentIdOverride: variant.agentId,
+          prospectData: dynamicVariables,
+        });
 
         if (!outboundResult.success) {
           throw new Error('Failed to initiate call: ' + outboundResult.error);
@@ -399,19 +442,22 @@ export class CallEngine {
 
         callResult.callSid = outboundResult.callSid;
         callResult.status = 'answered';
-        callResult.notes = `ElevenLabs conversation: ${outboundResult.conversationId}`;
+        callResult.notes = `ElevenLabs conversation: ${outboundResult.conversationId} | variant: ${variant.id}`;
 
         console.log('[CallEngine.callProspect] Call initiated via ElevenLabs');
         console.log('[CallEngine.callProspect] Conversation ID:', outboundResult.conversationId);
         console.log('[CallEngine.callProspect] Call SID:', outboundResult.callSid);
+        console.log('[CallEngine.callProspect] Variant:', variant.id);
 
-        // ElevenLabs handles the full conversation (Ava talks to prospect)
+        // ElevenLabs handles the full conversation
         // Outcome will be determined via post-call webhook or polling
         callResult.outcome = 'interested'; // Default — webhook will update
       }
 
       await this.updateCallLog(callLogId, {
         twilio_call_sid: callResult.callSid,
+        agent_variant: variant.id,
+        agent_id_used: variant.agentId,
         status: callResult.status,
       });
 
