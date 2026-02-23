@@ -36,6 +36,7 @@ interface ProspectRow {
   industry: string | null;
   city: string | null;
   state: string | null;
+  geo_state: string | null;
   location: string | null;
   product_service: string | null;
   specific_detail: string | null;
@@ -277,7 +278,7 @@ export class SequenceRunner {
       .replace(/\{\{business_name\}\}/g, companyName)
       .replace(/\{\{email\}\}/g, prospect.email || '')
       .replace(/\{\{city\}\}/g, city || 'your area')
-      .replace(/\{\{state\}\}/g, prospect.state || '')
+      .replace(/\{\{state\}\}/g, prospect.geo_state || '')
       .replace(/\{\{industry\}\}/g, prospect.industry || 'your industry')
       .replace(/\{\{region\}\}/g, city || 'your area')
       .replace(/\{\{website\}\}/g, prospect.website || 'your website')

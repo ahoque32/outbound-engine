@@ -49,7 +49,7 @@ export interface ProspectForCall {
   // Dynamic variable fields for voice agent personalization
   email?: string;
   city?: string;
-  state?: string;
+  geoState?: string;
   productService?: string;
   specificDetail?: string;
   desiredBenefit?: string;
@@ -217,6 +217,7 @@ export class CallEngine {
         location,
         email,
         state,
+        geo_state,
         product_service,
         specific_detail,
         desired_benefit
@@ -308,7 +309,7 @@ export class CallEngine {
           location: p.location,
           email: p.email,
           city: p.location?.split(',')[0]?.trim(),
-          state: p.state,
+          geoState: (p as any).geo_state,
           productService: p.product_service,
           specificDetail: p.specific_detail,
           desiredBenefit: p.desired_benefit,
@@ -402,7 +403,7 @@ export class CallEngine {
         company_name: prospect.company || '',
         website: prospect.website || '',
         city: prospect.city || prospect.location || '',
-        state: prospect.state || '',
+        state: prospect.geoState || '',
         product_service: prospect.productService || '',
         specific_detail: prospect.specificDetail || '',
         desired_benefit: prospect.desiredBenefit || '',
