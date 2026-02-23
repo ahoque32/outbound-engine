@@ -29,11 +29,17 @@ interface ProspectRow {
   email: string;
   name: string | null;
   company: string | null | undefined;
+  company_name: string | null | undefined;
   linkedin_url: string | null;
   x_handle: string | null;
   website: string | null;
   industry: string | null;
   city: string | null;
+  state: string | null;
+  location: string | null;
+  product_service: string | null;
+  specific_detail: string | null;
+  desired_benefit: string | null;
 }
 
 interface CampaignRow {
@@ -258,16 +264,26 @@ export class SequenceRunner {
   }
 
   private personalize(template: string, prospect: ProspectRow): string {
+    const companyName = prospect.company_name || prospect.company || 'your company';
+    const firstName = ((prospect as any).name || '').split(' ')[0] || 'there';
+    const lastName = ((prospect as any).name || '').split(' ').slice(1).join(' ') || '';
+    const city = prospect.city || prospect.location || '';
+
     return template
-      .replace(/\{\{first_name\}\}/g, ((prospect as any).name || '').split(' ')[0] || 'there')
-      .replace(/\{\{last_name\}\}/g, ((prospect as any).name || '').split(' ').slice(1).join(' ') || '')
-      .replace(/\{\{company\}\}/g, prospect.company || 'your company')
-      .replace(/\{\{business_name\}\}/g, prospect.company || 'your business')
+      .replace(/\{\{first_name\}\}/g, firstName)
+      .replace(/\{\{last_name\}\}/g, lastName)
+      .replace(/\{\{company\}\}/g, companyName)
+      .replace(/\{\{company_name\}\}/g, companyName)
+      .replace(/\{\{business_name\}\}/g, companyName)
       .replace(/\{\{email\}\}/g, prospect.email || '')
-      .replace(/\{\{city\}\}/g, prospect.city || 'your area')
+      .replace(/\{\{city\}\}/g, city || 'your area')
+      .replace(/\{\{state\}\}/g, prospect.state || '')
       .replace(/\{\{industry\}\}/g, prospect.industry || 'your industry')
-      .replace(/\{\{region\}\}/g, prospect.city || 'your area')
-      .replace(/\{\{website\}\}/g, prospect.website || 'your website');
+      .replace(/\{\{region\}\}/g, city || 'your area')
+      .replace(/\{\{website\}\}/g, prospect.website || 'your website')
+      .replace(/\{\{product_service\}\}/g, prospect.product_service || 'your services')
+      .replace(/\{\{specific_detail\}\}/g, prospect.specific_detail || '')
+      .replace(/\{\{desired_benefit\}\}/g, prospect.desired_benefit || 'growth');
   }
 
   private async checkRateLimit(prospectEmail: string): Promise<{ allowed: boolean; reason?: string }> {
