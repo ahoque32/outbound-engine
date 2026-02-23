@@ -70,7 +70,8 @@ export interface ProspectRow {
   industry?: string;
   company_size?: string;
   location?: string;
-  state: ProspectState;
+  pipeline_state: ProspectState;
+  state?: string; // geographic state (e.g. "Tennessee")
   linkedin_state: LinkedInState;
   x_state: XState;
   email_state: EmailState;
@@ -165,7 +166,8 @@ export interface Prospect {
   industry?: string;
   companySize?: string;
   location?: string;
-  state: ProspectState;
+  pipeline_state: ProspectState;
+  state?: string; // geographic state
   linkedinState: LinkedInState;
   xState: XState;
   emailState: EmailState;
@@ -287,6 +289,7 @@ export function prospectFromRow(row: ProspectRow): Prospect {
     industry: row.industry,
     companySize: row.company_size,
     location: row.location,
+    pipeline_state: row.pipeline_state,
     state: row.state,
     linkedinState: row.linkedin_state,
     xState: row.x_state,

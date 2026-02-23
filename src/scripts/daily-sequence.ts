@@ -271,7 +271,7 @@ export async function executeDailySequences() {
               );
               break;
             default:
-              newState = prospect.state;
+              newState = prospect.pipeline_state;
           }
           
           console.log(`[DB] Updating prospect ${prospect.id} state...`);

@@ -168,7 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else if (intent === 'interested') {
         newState = 'engaged';
         console.log(`[incoming-sms] 🎯 INTERESTED: ${prospectName} — flagged for follow-up`);
-      } else if (prospect?.state === 'contacted') {
+      } else if (prospect?.pipeline_state === 'contacted') {
         newState = 'engaged'; // Any reply = engagement
       }
 
@@ -178,7 +178,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           headers: { ...sbHeaders, 'Prefer': 'return=minimal' },
           body: JSON.stringify({ state: newState, sms_state: intent === 'stop' ? 'opted_out' : 'replied' }),
         });
-        console.log(`[incoming-sms] State updated: ${prospect.state} → ${newState}`);
+        console.log(`[incoming-sms] State updated: ${prospect.pipeline_state} → ${newState}`);
       }
     }
 

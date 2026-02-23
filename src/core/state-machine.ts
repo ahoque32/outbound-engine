@@ -89,10 +89,10 @@ export class ProspectStateMachine {
   static determineMainState(prospect: Prospect, touchpoints: Touchpoint[]): ProspectState {
     // If booked on any channel, main state is booked
     if (prospect.voiceState === 'booked') {
-      if (this.canTransition(prospect.state, 'booked')) {
+      if (this.canTransition(prospect.pipeline_state, 'booked')) {
         return 'booked';
       }
-      return prospect.state;
+      return prospect.pipeline_state;
     }
     
     // Count positive touchpoints
@@ -101,15 +101,15 @@ export class ProspectStateMachine {
     ).length;
 
     // State logic based on touchpoints
-    let newState: ProspectState = prospect.state;
+    let newState: ProspectState = prospect.pipeline_state;
     if (positiveTouches >= 3) newState = 'qualified';
     else if (positiveTouches >= 1) newState = 'engaged';
     else if (touchpoints.length > 0) newState = 'contacted';
     
     // Validate transition
-    if (newState !== prospect.state && !this.canTransition(prospect.state, newState)) {
-      console.log(`[StateMachine] Invalid transition from ${prospect.state} to ${newState}, keeping current state`);
-      return prospect.state;
+    if (newState !== prospect.pipeline_state && !this.canTransition(prospect.pipeline_state, newState)) {
+      console.log(`[StateMachine] Invalid transition from ${prospect.pipeline_state} to ${newState}, keeping current state`);
+      return prospect.pipeline_state;
     }
     
     return newState;
