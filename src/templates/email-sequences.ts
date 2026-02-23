@@ -1,7 +1,7 @@
 // Email Sequences — Cold outreach templates for RenderWiseAI
 // Each sequence has 3 emails with 3-day gaps
 // Placeholders: {{first_name}}, {{company}}, {{website}}
-// Calendly link: https://calendly.com/renderwiseai/30min
+// Calendly link: https://renderwiseai.com/calendar
 
 export interface EmailTemplate {
   subject: string;
@@ -31,7 +31,7 @@ I was checking out {{company}}'s website and noticed a few things that might be 
 
 We help businesses like {{company}} turn their websites into actual revenue generators. Recently redesigned a similar site and increased their inbound leads by 40% in the first month.
 
-Worth a quick chat? Here's my calendar: https://calendly.com/renderwiseai/30min
+Worth a quick chat? Here's my calendar: https://renderwiseai.com/calendar
 
 Best,
 Jake
@@ -54,7 +54,7 @@ I ran a quick audit and found 3 specific issues that are likely hurting your con
 
 Happy to share the full audit — no cost, just thought it might be useful.
 
-Book 15 mins here if you're curious: https://calendly.com/renderwiseai/30min
+Book 15 mins here if you're curious: https://renderwiseai.com/calendar
 
 Jake
 RenderWiseAI`,
@@ -77,7 +77,7 @@ Either way, best of luck with {{company}}.
 Jake
 RenderWiseAI
 
-P.S. — Still have a few spots open this week if you want to chat: https://calendly.com/renderwiseai/30min`,
+P.S. — Still have a few spots open this week if you want to chat: https://renderwiseai.com/calendar`,
   },
 ];
 
@@ -98,7 +98,7 @@ Most businesses lose 40%+ of potential leads to "business hours only" responses.
 
 We build AI chatbots that handle inquiries 24/7, qualify leads, and book appointments while you sleep. One client in {{company}}'s space captured 23 additional qualified leads in their first month.
 
-Curious how it'd work for {{company}}? Grab a time here: https://calendly.com/renderwiseai/30min
+Curious how it'd work for {{company}}? Grab a time here: https://renderwiseai.com/calendar
 
 Best,
 Jake
@@ -118,7 +118,7 @@ I put together a quick demo showing how an AI assistant would handle common ques
 
 The whole thing takes 20 minutes to set up and runs on autopilot.
 
-Want to see the demo? Book a quick call: https://calendly.com/renderwiseai/30min
+Want to see the demo? Book a quick call: https://renderwiseai.com/calendar
 
 Or just reply "send it" and I'll forward the link.
 
@@ -162,7 +162,7 @@ I'm Jake from RenderWiseAI. We help businesses like {{company}} scale faster wit
 
 Recently helped a similar {{industry}} company increase qualified inbound by 60% and cut response time from hours to seconds.
 
-Worth a brief chat to see if there's a fit? Here's my calendar: https://calendly.com/renderwiseai/30min
+Worth a brief chat to see if there's a fit? Here's my calendar: https://renderwiseai.com/calendar
 
 Best,
 Jake
@@ -182,7 +182,7 @@ Quick question: what's your biggest bottleneck right now — lead generation, co
 
 We've built specific playbooks for {{industry}} companies depending on where they're stuck. Happy to share the one that matches {{company}}'s situation — takes 2 minutes to scan.
 
-If any of it resonates, we can chat: https://calendly.com/renderwiseai/30min
+If any of it resonates, we can chat: https://renderwiseai.com/calendar
 
 Jake
 RenderWiseAI`,
@@ -198,7 +198,7 @@ Last note from me — promise.
 
 If growth automation isn't on {{company}}'s radar right now, no hard feelings. Timing is everything.
 
-If you ever want to revisit, just reply and I'll pick up where we left off. Or grab a time here if something changes: https://calendly.com/renderwiseai/30min
+If you ever want to revisit, just reply and I'll pick up where we left off. Or grab a time here if something changes: https://renderwiseai.com/calendar
 
 Best of luck with {{company}}.
 
