@@ -41,6 +41,26 @@ export type VoiceState =
 
 export type Channel = 'linkedin' | 'x' | 'email' | 'voice';
 
+// Call log row type (snake_case - matches Supabase schema)
+export interface CallLogRow {
+  id?: string;
+  conversation_id: string;
+  agent_variant?: string;
+  agent_id_used?: string;
+  status: string;
+  duration_seconds?: number | null;
+  outcome?: string;
+  transcript?: string;
+  analysis?: string;
+  booking_made?: boolean;
+  ghl_contact_id?: string;
+  ghl_appointment_id?: string;
+  booked_time?: string;
+  notes?: string;
+  completed_at?: string;
+  created_at?: string;
+}
+
 // DB Row types (snake_case - matches Supabase schema)
 export interface CampaignRow {
   id: string;

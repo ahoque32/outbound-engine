@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { checkSpamStatus, getCallMetrics, analyzeCallMetrics } from '../src/monitoring/spam-monitor';
 
 /**
  * Poll for completed ElevenLabs conversations that may have been missed by the webhook.
@@ -8,11 +9,13 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
  * 1. List recent conversations from ElevenLabs (last N hours)
  * 2. Check which ones are NOT in our call_logs table
  * 3. For any missing, forward to post-call-webhook for processing
+ * 4. Check spam status for our number and alert if flagged
  */
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+17704077842';
 
 const sbHeaders = {
   'apikey': SUPABASE_KEY,
@@ -110,11 +113,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
     
-    res.json({
+    // 4. Check spam status and call metrics
+    let spamAlert = false;
+    let spamStatus = null;
+    let callMetrics = null;
+    let metricWarnings: string[] = [];
+    
+    try {
+      // Check spam status for our number
+      spamStatus = await checkSpamStatus(TWILIO_PHONE_NUMBER);
+      
+      if (spamStatus.flagged) {
+        spamAlert = true;
+        console.error(`[poll-completed] CRITICAL: Number ${TWILIO_PHONE_NUMBER} flagged as spam! Score: ${spamStatus.score}`);
+      }
+      
+      // Get call metrics for analysis
+      callMetrics = await getCallMetrics(hoursBack);
+      const analysis = analyzeCallMetrics(callMetrics);
+      metricWarnings = analysis.warnings;
+      
+      if (!analysis.healthy) {
+        console.warn(`[poll-completed] Call quality warnings:`, analysis.warnings);
+      }
+    } catch (spamErr: any) {
+      console.error('[poll-completed] Spam/metrics check error:', spamErr.message);
+      // Don't fail the whole request if spam check fails
+    }
+    
+    const response: any = {
       processed: results.length,
       missing: missing.length,
       results,
-    });
+    };
+    
+    // Add spam alert if flagged
+    if (spamAlert) {
+      response.spam_alert = true;
+      response.spam_status = spamStatus;
+      console.error('[poll-completed] CRITICAL ALERT: Spam flag detected on our number');
+    }
+    
+    // Add metrics if available
+    if (callMetrics) {
+      response.call_metrics = callMetrics;
+      response.metric_warnings = metricWarnings;
+    }
+    
+    res.json(response);
   } catch (error: any) {
     console.error('[poll-completed] Error:', error);
     res.status(500).json({ error: error.message });
