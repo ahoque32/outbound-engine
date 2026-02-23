@@ -1,8 +1,10 @@
-// Email Adapter — AgentMail integration
+// Email Adapter — AgentMail integration with Instantly.ai health gate
 // Sends real emails via AgentMail API and logs to Supabase
+// Checks Instantly.ai warmup health before sending
 
 import { BaseChannelAdapter } from './base-adapter';
 import { Prospect, TouchpointResult } from '../types';
+import { InstantlyAdapter } from './instantly-adapter';
 
 interface AgentMailRecipient {
   email: string;
@@ -27,11 +29,17 @@ const SENDER_INBOXES = [
   'hello@nextwavedesigns.org',
 ];
 
+// Minimum warmup score required to send emails
+const MIN_WARMUP_SCORE = 80;
+
 export class EmailAdapter extends BaseChannelAdapter {
   name = 'email' as const;
   private apiKey: string;
   private validInboxes: Set<string> | null = null;
   private inboxValidationPromise: Promise<void> | null = null;
+  private instantlyAdapter: InstantlyAdapter | null = null;
+  private healthCheckCache: Map<string, { healthy: boolean; timestamp: number }> = new Map();
+  private readonly HEALTH_CACHE_TTL_MS = 60000; // 1 minute cache
 
   constructor(apiKey?: string) {
     super();
@@ -39,6 +47,87 @@ export class EmailAdapter extends BaseChannelAdapter {
     if (!this.apiKey) {
       console.warn('[Email] WARNING: AGENTMAIL_API_KEY not set');
     }
+  }
+
+  /**
+   * Get or create Instantly adapter instance
+   */
+  private getInstantlyAdapter(): InstantlyAdapter {
+    if (!this.instantlyAdapter) {
+      this.instantlyAdapter = new InstantlyAdapter();
+    }
+    return this.instantlyAdapter;
+  }
+
+  /**
+   * Check if sender domain is healthy via Instantly
+   * Returns the first healthy inbox or null if none are healthy
+   */
+  private async getHealthyInbox(preferredInbox?: string): Promise<string | null> {
+    const instantly = this.getInstantlyAdapter();
+    const now = Date.now();
+
+    // Check cache first for all inboxes
+    const cachedHealthy: string[] = [];
+    const needCheck: string[] = [];
+
+    const inboxesToCheck = preferredInbox ? [preferredInbox] : SENDER_INBOXES;
+
+    for (const inbox of inboxesToCheck) {
+      const cached = this.healthCheckCache.get(inbox);
+      if (cached && now - cached.timestamp < this.HEALTH_CACHE_TTL_MS) {
+        if (cached.healthy) {
+          cachedHealthy.push(inbox);
+        }
+      } else {
+        needCheck.push(inbox);
+      }
+    }
+
+    // Return cached healthy inbox if available
+    if (cachedHealthy.length > 0) {
+      return cachedHealthy[0];
+    }
+
+    // Check remaining inboxes via Instantly API
+    if (needCheck.length > 0) {
+      try {
+        const healthStatus = await instantly.getHealthStatus(needCheck);
+        
+        for (const [email, status] of Object.entries(healthStatus)) {
+          this.healthCheckCache.set(email, {
+            healthy: status.healthy,
+            timestamp: now
+          });
+          
+          if (status.healthy) {
+            return email;
+          }
+        }
+      } catch (err: any) {
+        console.error('[Email] Health check failed:', err.message);
+        // If health check fails, allow sending (fail open)
+        return needCheck[0];
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if any sender domain is healthy
+   */
+  async hasHealthyDomain(): Promise<boolean> {
+    const healthyInbox = await this.getHealthyInbox();
+    return healthyInbox !== null;
+  }
+
+  /**
+   * Get health status summary for all sender inboxes
+   */
+  async getHealthSummary(): Promise<Record<string, { healthy: boolean; score: number | null }>> {
+    const instantly = this.getInstantlyAdapter();
+    return instantly.getHealthStatus(SENDER_INBOXES);
   }
   
   /**
@@ -127,7 +216,25 @@ export class EmailAdapter extends BaseChannelAdapter {
     }
 
     // Pick sender inbox (round-robin based on prospect email hash)
-    const inboxEmail = this.pickInbox(prospect.email!);
+    const preferredInbox = this.pickInbox(prospect.email!);
+    
+    // Health gate: Check Instantly warmup score before sending
+    const healthyInbox = await this.getHealthyInbox(preferredInbox);
+    
+    if (!healthyInbox) {
+      console.error(`[Email] ❌ Health gate blocked: No healthy sender domains available (warmup score < ${MIN_WARMUP_SCORE})`);
+      return { 
+        success: false, 
+        error: `All sender domains unhealthy (warmup score < ${MIN_WARMUP_SCORE}). Email sequence paused.`, 
+        outcome: 'paused' 
+      };
+    }
+    
+    if (healthyInbox !== preferredInbox) {
+      console.log(`[Email] ℹ️  Preferred inbox ${preferredInbox} unhealthy, using ${healthyInbox} instead`);
+    }
+    
+    const inboxEmail = healthyInbox;
     
     // Validate inbox exists
     if (!this.isInboxValid(inboxEmail)) {
@@ -194,7 +301,23 @@ export class EmailAdapter extends BaseChannelAdapter {
     // Validate inboxes on first use
     await this.validateInboxes();
 
-    const inboxEmail = fromInbox || this.pickInbox(prospect.email!);
+    // Health gate: Check Instantly warmup score before sending
+    const healthyInbox = await this.getHealthyInbox(fromInbox);
+    
+    if (!healthyInbox) {
+      console.error(`[Email] ❌ Health gate blocked: No healthy sender domains available (warmup score < ${MIN_WARMUP_SCORE})`);
+      return { 
+        success: false, 
+        error: `All sender domains unhealthy (warmup score < ${MIN_WARMUP_SCORE}). Email sequence paused.`, 
+        outcome: 'paused' 
+      };
+    }
+    
+    if (fromInbox && healthyInbox !== fromInbox) {
+      console.log(`[Email] ℹ️  Requested inbox ${fromInbox} unhealthy, using ${healthyInbox} instead`);
+    }
+    
+    const inboxEmail = healthyInbox;
     
     // Validate inbox exists
     if (!this.isInboxValid(inboxEmail)) {
