@@ -1,0 +1,79 @@
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        reviewer: [architecture, bugs, style]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get PR diff
+        id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr diff ${{ github.event.pull_request.number }} > /tmp/pr.diff
+          head -c 102400 /tmp/pr.diff > /tmp/pr_truncated.diff
+          echo "diff_size=$(wc -c < /tmp/pr.diff)" >> $GITHUB_OUTPUT
+
+      - name: AI Review (${{ matrix.reviewer }})
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          REVIEWER: ${{ matrix.reviewer }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$REVIEWER" in
+            architecture)
+              FOCUS="Review for architectural concerns: separation of concerns, modularity, scalability, dependency management, and overall design patterns. Flag any anti-patterns or structural issues."
+              ;;
+            bugs)
+              FOCUS="Review for bugs and correctness: logic errors, edge cases, null/undefined handling, race conditions, security vulnerabilities, error handling gaps, and potential runtime failures."
+              ;;
+            style)
+              FOCUS="Review for code quality and style: naming conventions, code duplication, readability, unnecessary complexity, missing types, and adherence to modern best practices for the detected language/framework."
+              ;;
+          esac
+
+          DIFF=$(cat /tmp/pr_truncated.diff)
+
+          PAYLOAD=$(jq -n \
+            --arg focus "$FOCUS" \
+            --arg diff "$DIFF" \
+            --arg title "$PR_TITLE" \
+            --arg body "${PR_BODY:-No description}" \
+            '{
+              model: "MiniMax-M2.5",
+              max_tokens: 2048,
+              messages: [{
+                role: "user",
+                content: ("You are a senior code reviewer focused on: " + $focus + "\n\nPR Title: " + $title + "\nPR Description: " + $body + "\n\nDiff:\n```diff\n" + $diff + "\n```\n\nProvide a concise review. Use this format:\n## 🔍 Review\n\nList issues found (if any) as bullet points with file:line references. If the code looks good, say so briefly. Keep it under 500 words. End with a verdict: ✅ LGTM, ⚠️ Minor Issues, or 🚨 Needs Changes.")
+              }]
+            }')
+
+          RESPONSE=$(curl -s https://api.minimax.io/anthropic/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $MINIMAX_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d "$PAYLOAD")
+
+          REVIEW=$(echo "$RESPONSE" | jq -r '.content[0].text // "Review failed — check API key or response: " + (.error.message // "unknown error")')
+
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body "### 🤖 AI Reviewer: **${REVIEWER^}**
+
+          ${REVIEW}"
