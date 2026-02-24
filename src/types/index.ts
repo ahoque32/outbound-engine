@@ -102,6 +102,10 @@ export interface ProspectRow {
   last_touchpoint_at?: string;
   created_at: string;
   updated_at: string;
+  // Email verification fields
+  email_verification_status?: string;
+  email_is_disposable?: boolean;
+  email_verified_at?: string;
 }
 
 export interface TouchpointRow {
