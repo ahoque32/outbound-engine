@@ -194,6 +194,7 @@ export class SequenceRunner {
           companySize: '',
           location: (prospect as ProspectRow).city || '',
           state: 'contacted' as any,
+          pipeline_state: 'contacted' as any,
           linkedinState: 'not_connected' as any,
           xState: 'not_following' as any,
           voiceState: 'not_called' as any,

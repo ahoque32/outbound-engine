@@ -1,0 +1,64 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [master]
+
+env:
+  PROJECT_ID: reverberant-yew-486022-j6
+  REGION: us-east1
+  SERVICE: outbound-engine
+  AR_REPO: cloud-run-source-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Google Auth (Workload Identity)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/457623930004/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider'
+          service_account: 'github-actions-deployer@reverberant-yew-486022-j6.iam.gserviceaccount.com'
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+
+      - name: Build and Push to Artifact Registry
+        run: |
+          docker build -t $REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/$SERVICE:${{ github.sha }} .
+          docker push $REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/$SERVICE:${{ github.sha }}
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy $SERVICE \
+            --image $REGION-docker.pkg.dev/$PROJECT_ID/$AR_REPO/$SERVICE:${{ github.sha }} \
+            --region $REGION \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 512Mi \
+            --cpu 1 \
+            --min-instances 0 \
+            --max-instances 3 \
+            --port 8080
+
+      - name: Verify deployment
+        run: |
+          URL=$(gcloud run services describe $SERVICE --region $REGION --format 'value(status.url)')
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/api/health")
+          echo "Health check: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check failed!"
+            exit 1
+          fi
+          echo "✅ Deployment verified"

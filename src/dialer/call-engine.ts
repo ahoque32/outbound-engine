@@ -49,6 +49,7 @@ export interface ProspectForCall {
   // Dynamic variable fields for voice agent personalization
   email?: string;
   city?: string;
+  state?: string;
   
   productService?: string;
   specificDetail?: string;
