@@ -277,13 +277,11 @@ async function findOrCreateGHLContact(data: {
   variant?: string;
 }): Promise<string | null> {
   // Search by phone first
-  console.log(`[findOrCreateGHLContact] 🔍 Searching for contact by phone: ${data.phone}`);
   const searchRes = await fetch(
     `https://services.leadconnectorhq.com/contacts/search/duplicate?locationId=${GHL_LOCATION_ID}&number=${encodeURIComponent(data.phone)}`,
     { headers: ghlHeaders() }
   );
   const searchData = await searchRes.json() as any;
-  console.log(`[findOrCreateGHLContact] 📋 Phone search result:`, JSON.stringify(searchData).substring(0, 500));
 
   if (searchData.contact?.id) {
     // Update existing contact with tags
@@ -395,7 +393,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Fetch conversation data from ElevenLabs
-    console.log(`[post-call-webhook] 📞 Fetching conversation ${conversation_id} from ElevenLabs...`);
     const convRes = await fetch(
       `https://api.elevenlabs.io/v1/convai/conversations/${conversation_id}`,
       { headers: { 'xi-api-key': ELEVENLABS_API_KEY } }
@@ -408,24 +405,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const conversationData = await convRes.json() as any;
-    
-    // DEBUG: Log full conversation metadata for troubleshooting
-    console.log(`[post-call-webhook] 🔍 CONVERSATION METADATA:`, JSON.stringify({
-      conversation_id,
-      status: conversationData.status,
-      agent_id: conversationData.agent_id,
-      call_duration_secs: conversationData.metadata?.call_duration_secs,
-      transcript_length: conversationData.transcript?.length || 0,
-      transcript_preview: conversationData.transcript?.slice(0, 3) || [],
-      analysis_keys: Object.keys(conversationData.analysis || {}),
-      analysis_summary: conversationData.analysis?.transcript_summary?.substring(0, 500),
-      analysis_call_successful: conversationData.analysis?.call_successful,
-      dynamic_variables: conversationData.metadata?.dynamic_variables || {},
-      phone_external: conversationData.metadata?.phone_call?.external_number,
-      started_at: conversationData.metadata?.started_at,
-      ended_at: conversationData.metadata?.ended_at,
-    }, null, 2));
-
     const usedAgentId = agent_id || conversationData.agent_id;
     const variant = getVariantByAgentId(usedAgentId);
     const variantId = variant?.id || 'unknown';
@@ -441,7 +420,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Analyze transcript for booking intent + details
     const booking = analyzeTranscript(transcript, dynamicVars, analysis);
-    console.log(`[post-call-webhook] 📊 ANALYSIS RESULT: conversation=${conversation_id}, variant=${variantId}, outcome=${booking.outcome}, booked=${booking.booked}, selectedTime=${booking.selectedTime}, confirmedEmail=${booking.confirmedEmail}, confirmedName=${booking.confirmedName}`);
+    console.log(`[post-call-webhook] Conversation ${conversation_id} — variant: ${variantId}, outcome: ${booking.outcome}, booked: ${booking.booked}`);
 
     // Log to Supabase via REST API
     const sbHeaders = {
@@ -523,9 +502,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               booked_time: booking.selectedTime,
             })}
           );
-      } else if (!contactId) {
-          console.log('[post-call-webhook] ❌ GHL contact creation FAILED - no contactId returned');
-      } else if (contactId && !booking.selectedTime) {
+        } else if (contactId && !booking.selectedTime) {
           console.log('[post-call-webhook] ⚠️ Booking detected but no time extracted — contact created/updated, manual booking needed');
           await fetch(
             `${SUPABASE_URL}/rest/v1/call_logs?conversation_id=eq.${encodeURIComponent(conversation_id)}`,
