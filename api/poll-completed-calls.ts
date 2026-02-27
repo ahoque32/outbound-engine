@@ -16,11 +16,23 @@ const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '+17704077842';
+const POST_CALL_WEBHOOK_URL = process.env.POST_CALL_WEBHOOK_URL || 'https://outbound-engine-one.vercel.app/api/post-call-webhook';
 
 const sbHeaders = {
   'apikey': SUPABASE_KEY,
   'Authorization': `Bearer ${SUPABASE_KEY}`,
 };
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function parseJsonSafe(text: string): { ok: true; data: any } | { ok: false; error: string } {
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch {
+    const snippet = (text || '').trim().slice(0, 160).replace(/\s+/g, ' ');
+    return { ok: false, error: `non-json response: ${snippet || '<empty>'}` };
+  }
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST' && req.method !== 'GET') {
@@ -82,27 +94,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const conv of missing) {
       try {
         console.log(`[poll-completed] Processing missed call: ${conv.conversation_id} (agent: ${conv.agent_id})`);
-        
-        const webhookRes = await fetch(
-          `https://outbound-engine-one.vercel.app/api/post-call-webhook`,
-          {
+
+        let finalStatus: 'processed' | 'failed' | 'error' = 'error';
+        let finalError: string | undefined;
+        let finalOutcome: string | undefined;
+
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          const webhookRes = await fetch(POST_CALL_WEBHOOK_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               conversation_id: conv.conversation_id,
               agent_id: conv.agent_id,
             }),
+          });
+
+          const rawText = await webhookRes.text();
+          const parsed = parseJsonSafe(rawText);
+
+          if (!webhookRes.ok) {
+            const parseErr = parsed.ok ? (parsed.data?.error || 'unknown error') : ('error' in parsed ? parsed.error : 'unknown error');
+            finalStatus = 'failed';
+            finalError = `attempt ${attempt}: HTTP ${webhookRes.status} - ${parseErr}`;
+          } else if (!parsed.ok) {
+            finalStatus = 'failed';
+            finalError = `attempt ${attempt}: ${'error' in parsed ? parsed.error : 'non-json response'}`;
+          } else {
+            const webhookData = parsed.data as any;
+            finalStatus = webhookData.success ? 'processed' : 'failed';
+            finalError = webhookData.error;
+            finalOutcome = webhookData.outcome;
+
+            if (finalStatus === 'processed') {
+              break;
+            }
           }
-        );
-        
-        const webhookData = await webhookRes.json() as any;
+
+          if (attempt < 3) {
+            await sleep(400 * attempt);
+          }
+        }
+
         results.push({
           conversation_id: conv.conversation_id,
-          status: webhookData.success ? 'processed' : 'failed',
-          error: webhookData.error,
+          status: finalStatus,
+          error: finalError,
         });
-        
-        console.log(`[poll-completed] Processed ${conv.conversation_id}: ${webhookData.outcome || 'unknown'}`);
+
+        console.log(`[poll-completed] Processed ${conv.conversation_id}: ${finalOutcome || finalStatus}`);
       } catch (err: any) {
         console.error(`[poll-completed] Error processing ${conv.conversation_id}:`, err.message);
         results.push({
