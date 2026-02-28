@@ -466,6 +466,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: 'completed',
       duration_seconds: duration,
       outcome: booking.outcome,
+      booking_made: booking.booked, // Set based on transcript analysis, not GHL success
       transcript: JSON.stringify(transcript),
       analysis: JSON.stringify(analysis),
       completed_at: new Date().toISOString(),
@@ -552,6 +553,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       variant: variantId,
       conversation_id,
       outcome: booking.outcome,
+      booking_made: booking.booked, // Set based on transcript analysis, not GHL success
       booked: booking.booked,
       appointment_id: appointmentResult?.id || null,
     });
