@@ -40,11 +40,11 @@ export const SCRIPT_TEMPLATES: Record<string, ScriptTemplate> = {
     name: 'Website Modernization',
     type: 'web-design',
     intro: 'Hi {{first_name}}, this is {{agent_name}} calling from RenderWiseAI.',
-    hook: "I took a look at {{company}}'s website and noticed {{observation}}. We help businesses like yours modernize their web presence and add AI-powered customer follow-up.",
+    hook: "I took a look at your website and noticed {{observation}}. We help businesses like yours modernize their web presence and add AI-powered customer follow-up.",
     qualify: 'Are you currently looking to update your website or improve how you handle incoming leads?',
     pitch: "We've helped local businesses increase their lead conversion by 40% with a modern site plus an AI assistant that follows up with every visitor. Takes about 2 weeks to set up.",
     book: "I'd love to set up a quick 15-minute call with our founder to show you what this looks like for {{company}}. What day works best this week?",
-    voicemail: "Hey {{first_name}}, this is {{agent_name}} from RenderWiseAI. I was looking at {{company}}'s website and had a couple ideas that could help you get more customers online. Give me a call back at this number or I'll try you again in a couple days. Have a good one!",
+    voicemail: "Hey {{first_name}}, this is {{agent_name}} from RenderWiseAI. I was looking at your website and had a couple ideas that could help you get more customers online. Give me a call back at this number or I'll try you again in a couple days. Have a good one!",
   },
   'ai-chatbot': {
     id: 'ai-chatbot',

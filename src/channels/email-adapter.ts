@@ -75,7 +75,7 @@ export class EmailAdapter extends BaseChannelAdapter {
             delay: 0,
             variants: [{
               subject: '{{first_name}}, quick question about your site',
-              body: `Hi {{first_name}},<br><br>I was checking out your website and noticed a few things that might be costing you leads — slow load times, mobile layout issues, and a few UX friction points.<br><br>We help businesses like yours turn their websites into actual revenue generators. Recently redesigned a similar site and increased their inbound leads by 40% in the first month.<br><br>Worth a quick chat? Here's my calendar: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a><br><br>Best,<br>Jake<br><br>RenderWiseAI`,
+              body: `<p>Hi {{first_name}},</p><p>I was checking out your website and noticed a few things that might be costing you leads — slow load times, mobile layout issues, and a few UX friction points.</p><p>We help businesses like yours turn their websites into actual revenue generators. Recently redesigned a similar site and increased their inbound leads by 40% in the first month.</p><p>Worth a quick chat? Here's my calendar: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p><p>Best,<br>Jake<br>RenderWiseAI</p>`,
             }],
           },
           {
@@ -83,7 +83,7 @@ export class EmailAdapter extends BaseChannelAdapter {
             delay: 3,
             variants: [{
               subject: 'Re: your site improvements',
-              body: `Hi {{first_name}},<br><br>Wanted to follow up on my note about your website.<br><br>I ran a quick audit and found 3 specific issues that are likely hurting your conversion rate:<br>• Slow mobile loading (losing ~30% of visitors)<br>• Confusing navigation flow<br>• No clear call-to-action above the fold<br><br>Happy to share the full audit — no cost, just thought it might be useful.<br><br>Book 15 mins here if you're curious: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a><br><br>Jake<br>RenderWiseAI`,
+              body: `<p>Hi {{first_name}},</p><p>Wanted to follow up on my note about your website.</p><p>I ran a quick audit and found 3 specific issues that are likely hurting your conversion rate:</p><p>• Slow mobile loading (losing ~30% of visitors)<br>• Confusing navigation flow<br>• No clear call-to-action above the fold</p><p>Happy to share the full audit — no cost, just thought it might be useful.</p><p>Book 15 mins here if you're curious: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p><p>Jake<br>RenderWiseAI</p>`,
             }],
           },
           {
@@ -91,7 +91,7 @@ export class EmailAdapter extends BaseChannelAdapter {
             delay: 3,
             variants: [{
               subject: 'Last note — your website',
-              body: `Hi {{first_name}},<br><br>I'll keep this short since I know you're busy.<br><br>If you're happy with how your site is performing, no worries at all — just wanted to make sure this didn't get buried.<br><br>If you ever want that free audit I mentioned, just reply and I'll send it over.<br><br>Either way, best of luck!<br><br>Jake<br>RenderWiseAI<br><br>P.S. — Still have a few spots open this week: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a>`,
+              body: `<p>Hi {{first_name}},</p><p>I'll keep this short since I know you're busy.</p><p>If you're happy with how your site is performing, no worries at all — just wanted to make sure this didn't get buried.</p><p>If you ever want that free audit I mentioned, just reply and I'll send it over.</p><p>Either way, best of luck!</p><p>Jake<br>RenderWiseAI</p><p>P.S. — Still have a few spots open this week: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p>`,
             }],
           },
         ],

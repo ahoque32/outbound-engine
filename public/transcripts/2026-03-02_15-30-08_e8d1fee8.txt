@@ -1,0 +1,9 @@
+Call: e8d1fee8-4298-4159-a4a1-ff80472a42fb
+Agent: ava-direct
+Outcome: voicemail
+Time: 2026-03-02T15:30:08.641295+00:00
+==================================================
+
+[AGENT]: Hi Steve, this is Ava with RenderWise AI. I...
+[USER]: Mm-hmm. -which are eleven to five, Monday through Friday, and Saturday by appointment. If you're calling during these hours, we may be in a photo session. Please leave a message after the tone, and we
+[AGENT]: Hey Steve, this is a quick call from RenderWise AI. We help businesses like yours get more customers through modern web design and AI automation. I'll shoot you an email with some details. Talk soon!

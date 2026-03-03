@@ -193,7 +193,7 @@ export async function addLead(
 }
 
 export async function listLeads(campaignId: string): Promise<Lead[]> {
-  const d = await req<{ items?: Lead[] }>(`/leads?campaign_id=${campaignId}&limit=${MAX_LIMIT}`);
+  const d = await req<{ items?: Lead[] }>(`/leads/list`, { method: 'POST', body: JSON.stringify({ campaign_id: campaignId, limit: MAX_LIMIT }) });
   return d.items || [];
 }
 

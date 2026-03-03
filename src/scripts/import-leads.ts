@@ -111,6 +111,8 @@ async function main() {
     const state = row.state || row.State || '';
     const industry = row.industry || row.Industry || '';
     const source = row.source || 'csv_import';
+    const desiredBenefit = row.desiredbenefit || row.desired_benefit || row.benefit || row.DesiredBenefit || '';
+    const country = row.country || 'United States';
 
     // Must have email for email outbound — generate placeholder if missing
     if (!email) {
@@ -167,6 +169,8 @@ async function main() {
         state: state || null,
         industry: industry || null,
         source,
+        desired_benefit: desiredBenefit || null,
+        country,
         status: 'new',
       })
       .select('id')

@@ -1,0 +1,9 @@
+Call: ee526a13-33b5-4b9f-b7ba-792900818c79
+Agent: ava-warm
+Outcome: unknown
+Time: 2026-03-02T15:30:08.914967+00:00
+==================================================
+
+[AGENT]: Hey Perry! This is Ava from RenderWise AI. I was...
+[USER]: The person you're trying to reach is not available. At the tone, please record your message. When you have finished recording, you may hang up.
+[AGENT]: Hey Perry, this is a quick call from RenderWise AI. We help businesses like yours get more customers through modern web design and AI automation. I'll shoot you an email with some details. Talk soon!
