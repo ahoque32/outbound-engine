@@ -6,8 +6,8 @@
       "name": "Ava - Warm & Consultative",
       "voice": "Hope",
       "personality": "warm",
-      "llm": "gemini-2.5-flash",
-      "style": "warm, friendly, consultative — asks questions, builds rapport",
+      "llm": "gpt-4o",
+      "style": "warm, friendly, consultative \u2014 asks questions, builds rapport",
       "weight": 1.0,
       "enabled": true
     },
@@ -17,8 +17,8 @@
       "name": "Ava - Direct & Confident",
       "voice": "Hope",
       "personality": "direct",
-      "llm": "gemini-2.5-flash",
-      "style": "direct, fast-paced, value-first — respects their time",
+      "llm": "gpt-4o",
+      "style": "direct, fast-paced, value-first \u2014 respects their time",
       "weight": 1.0,
       "enabled": true
     },
@@ -28,8 +28,8 @@
       "name": "Ava - Warm & Playfully Confident",
       "voice": "Hope",
       "personality": "flirty",
-      "llm": "gemini-2.5-flash",
-      "style": "playful, magnetic, emotionally engaging — makes them smile and curious",
+      "llm": "gpt-4o",
+      "style": "playful, magnetic, emotionally engaging \u2014 makes them smile and curious",
       "weight": 1.0,
       "enabled": true
     },
@@ -40,7 +40,7 @@
       "voice": "Chris",
       "personality": "charming",
       "llm": "gpt-4o-mini",
-      "style": "charming, casual, genuine — like a helpful neighbor",
+      "style": "charming, casual, genuine \u2014 like a helpful neighbor",
       "weight": 1.0,
       "enabled": true
     },
@@ -51,7 +51,7 @@
       "voice": "Eric",
       "personality": "authority",
       "llm": "qwen3-30b-a3b",
-      "style": "smooth, professional, social-proof-led — expert consultant",
+      "style": "smooth, professional, social-proof-led \u2014 expert consultant",
       "weight": 1.0,
       "enabled": true
     }
@@ -61,21 +61,47 @@
   "minCallsBeforeBandit": 50,
   "testMatrix": {
     "modelTest": {
-      "gemini-2.5-flash": ["ava-warm", "ava-direct", "ava-warm-flirty"],
-      "gpt-4o-mini": ["chris-charming"],
-      "qwen3-30b-a3b": ["eric-authority"]
+      "gemini-2.5-flash": [
+        "ava-warm",
+        "ava-direct",
+        "ava-warm-flirty"
+      ],
+      "gpt-4o-mini": [
+        "chris-charming"
+      ],
+      "qwen3-30b-a3b": [
+        "eric-authority"
+      ]
     },
     "personalityTest": {
-      "warm": ["ava-warm"],
-      "direct": ["ava-direct"],
-      "flirty": ["ava-warm-flirty"],
-      "charming": ["chris-charming"],
-      "authority": ["eric-authority"]
+      "warm": [
+        "ava-warm"
+      ],
+      "direct": [
+        "ava-direct"
+      ],
+      "flirty": [
+        "ava-warm-flirty"
+      ],
+      "charming": [
+        "chris-charming"
+      ],
+      "authority": [
+        "eric-authority"
+      ]
     },
     "voiceTest": {
-      "hope-female": ["ava-warm", "ava-direct", "ava-warm-flirty"],
-      "chris-male": ["chris-charming"],
-      "eric-male": ["eric-authority"]
+      "hope-female": [
+        "ava-warm",
+        "ava-direct",
+        "ava-warm-flirty"
+      ],
+      "chris-male": [
+        "chris-charming"
+      ],
+      "eric-male": [
+        "eric-authority"
+      ]
     }
   }
 }
