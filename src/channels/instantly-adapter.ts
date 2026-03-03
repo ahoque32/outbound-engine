@@ -1,458 +1,233 @@
-// Instantly.ai Adapter
-// Channel adapter for Instantly.ai email warmup, deliverability, and sending
+/**
+ * Instantly.ai API v2 Adapter — Clean rewrite (Mar 2026)
+ * 
+ * Verified endpoints:
+ * - GET  /accounts?limit=100
+ * - POST /campaigns (requires campaign_schedule)
+ * - PATCH /campaigns/:id (email_list for senders, sequences for steps)
+ * - POST /campaigns/:id/activate (needs body: {})
+ * - POST /campaigns/:id/deactivate
+ * - GET/DELETE /campaigns/:id
+ * - POST /leads
+ * - GET /leads?campaign_id=x&limit=100
+ * 
+ * Quirks:
+ * - Timezone: use "America/Detroit" not "America/New_York"
+ * - All list endpoints max limit=100
+ * - activate/deactivate need body: {} (not empty)
+ * - email_list on PATCH = sender account emails
+ * - sequences on PATCH = email sequence steps
+ */
 
-import { BaseChannelAdapter } from './base-adapter';
-import { Prospect, TouchpointResult, Channel } from '../types';
-import {
-  InstantlyAccount,
-  WarmupAnalytics,
-  VerificationResult,
-  BackgroundJob,
-  CampaignParams,
-  Campaign,
-  Lead,
-  CampaignAnalytics,
-} from './instantly-types';
+import 'dotenv/config';
 
-const INSTANTLY_BASE_URL = 'https://api.instantly.ai/api/v2';
-const DEFAULT_TIMEOUT_MS = 30000;
+const BASE_URL = 'https://api.instantly.ai/api/v2';
+const API_KEY = process.env.INSTANTLY_API_KEY || '';
+const MAX_LIMIT = 100;
+const TIMEOUT_MS = 15000;
+const RATE_LIMIT_MS = 500;
 
-// Rate limiting configuration
-const RATE_LIMIT = {
-  maxRequestsPerSecond: 10,
-  maxRequestsPerMinute: 100,
-};
+let lastRequestTime = 0;
 
-export class InstantlyAdapter extends BaseChannelAdapter {
-  name: Channel = 'email';
-  private apiKey: string;
-  private requestTimestamps: number[] = [];
-  private accountCache: Map<string, { account: InstantlyAccount; timestamp: number }> = new Map();
-  private readonly CACHE_TTL_MS = 60000; // 1 minute cache
+// ── Types ─────────────────────────────────────────────────────────────────────
 
-  constructor(apiKey?: string) {
-    super();
-    this.apiKey = apiKey || process.env.INSTANTLY_API_KEY || '';
-    if (!this.apiKey) {
-      console.warn('[Instantly] WARNING: INSTANTLY_API_KEY not set');
-    }
-  }
+export interface InstantlyAccount {
+  email: string;
+  status: number;
+  warmup_score?: number;
+  [key: string]: any;
+}
 
-  // ==================== Rate Limiting ====================
+export interface Campaign {
+  id: string;
+  name: string;
+  status: number; // 0=draft, 1=active, 2=paused
+  campaign_schedule?: any;
+  [key: string]: any;
+}
 
-  private async enforceRateLimit(): Promise<void> {
-    const now = Date.now();
-    
-    // Clean up old timestamps (older than 1 minute)
-    this.requestTimestamps = this.requestTimestamps.filter(
-      ts => now - ts < 60000
-    );
+export interface Lead {
+  id: string;
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  status: number;
+  [key: string]: any;
+}
 
-    // Check per-minute limit
-    if (this.requestTimestamps.length >= RATE_LIMIT.maxRequestsPerMinute) {
-      const oldestTimestamp = this.requestTimestamps[0];
-      const waitMs = 60000 - (now - oldestTimestamp) + 100;
-      console.log(`[Instantly] Rate limit (per minute) reached, waiting ${waitMs}ms`);
-      await this.delay(waitMs);
-      return this.enforceRateLimit();
-    }
+export interface EmailVariant {
+  subject: string;
+  body: string;
+}
 
-    // Check per-second limit
-    const recentRequests = this.requestTimestamps.filter(
-      ts => now - ts < 1000
-    );
-    if (recentRequests.length >= RATE_LIMIT.maxRequestsPerSecond) {
-      const waitMs = 1000 - (now - recentRequests[0]) + 100;
-      console.log(`[Instantly] Rate limit (per second) reached, waiting ${waitMs}ms`);
-      await this.delay(waitMs);
-      return this.enforceRateLimit();
-    }
+export interface SequenceStep {
+  type: 'email';
+  delay: number;
+  variants: EmailVariant[];
+}
 
-    this.requestTimestamps.push(now);
-  }
+export interface Sequence {
+  steps: SequenceStep[];
+}
 
-  // ==================== HTTP Client ====================
+// ── Request helper ────────────────────────────────────────────────────────────
 
-  private async request<T>(
-    endpoint: string,
-    options: RequestInit = {}
-  ): Promise<T> {
-    await this.enforceRateLimit();
+async function req<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const now = Date.now();
+  const wait = RATE_LIMIT_MS - (now - lastRequestTime);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastRequestTime = Date.now();
 
-    const url = `${INSTANTLY_BASE_URL}${endpoint}`;
-    const headers: Record<string, string> = {
-      'Authorization': `Bearer ${this.apiKey}`,
-      'Content-Type': 'application/json',
-      ...((options.headers as Record<string, string>) || {}),
-    };
+  const url = `${BASE_URL}${endpoint}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
-
-    try {
-      console.log(`[Instantly] ${options.method || 'GET'} ${endpoint}`);
-      
-      const response = await fetch(url, {
-        ...options,
-        headers,
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      const responseText = await response.text();
-      
-      if (!response.ok) {
-        console.error(`[Instantly] HTTP ${response.status}: ${responseText}`);
-        throw new Error(`Instantly API error: ${response.status} - ${responseText}`);
-      }
-
-      if (!responseText) {
-        return {} as T;
-      }
-
-      return JSON.parse(responseText) as T;
-    } catch (err: any) {
-      if (err.name === 'AbortError') {
-        throw new Error(`Instantly API request timeout after ${DEFAULT_TIMEOUT_MS}ms`);
-      }
-      throw err;
-    }
-  }
-
-  // ==================== Account Management ====================
-
-  async listAccounts(limit: number = 100): Promise<InstantlyAccount[]> {
-    const response = await this.request<{ items?: InstantlyAccount[] }>(`/accounts?limit=${limit}`);
-    return response.items || [];
-  }
-
-  async getAccount(email: string): Promise<InstantlyAccount | null> {
-    // Check cache first
-    const cached = this.accountCache.get(email);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL_MS) {
-      return cached.account;
-    }
-
-    try {
-      const accounts = await this.listAccounts();
-      const account = accounts.find(a => a.email === email) || null;
-      
-      if (account) {
-        this.accountCache.set(email, { account, timestamp: Date.now() });
-      }
-      
-      return account;
-    } catch (err: any) {
-      console.error(`[Instantly] Failed to get account ${email}:`, err.message);
-      return null;
-    }
-  }
-
-  // ==================== Health Gate ====================
-
-  /**
-   * Check if an email account is healthy for sending
-   * Requirements: warmup_score >= 80 AND status === 1 (Active)
-   */
-  async isHealthy(email: string): Promise<boolean> {
-    const account = await this.getAccount(email);
-    
-    if (!account) {
-      console.log(`[Instantly] Health check: ${email} - account not found`);
-      return false;
-    }
-
-    const isActive = account.status === 1;
-    const hasGoodScore = account.stat_warmup_score !== null && account.stat_warmup_score >= 80;
-
-    const healthy = isActive && hasGoodScore;
-    
-    console.log(
-      `[Instantly] Health check: ${email} - ` +
-      `status=${account.status} (${isActive ? 'active' : 'inactive'}), ` +
-      `score=${account.stat_warmup_score} (${hasGoodScore ? 'good' : 'poor'}) - ` +
-      `${healthy ? '✅ HEALTHY' : '❌ UNHEALTHY'}`
-    );
-
-    return healthy;
-  }
-
-  /**
-   * Get health status for multiple accounts
-   */
-  async getHealthStatus(emails: string[]): Promise<Record<string, {
-    healthy: boolean;
-    status: number;
-    score: number | null;
-    warmupStatus: number;
-  }>> {
-    const accounts = await this.listAccounts();
-    const accountMap = new Map(accounts.map(a => [a.email, a]));
-
-    const result: Record<string, {
-      healthy: boolean;
-      status: number;
-      score: number | null;
-      warmupStatus: number;
-    }> = {};
-
-    for (const email of emails) {
-      const account = accountMap.get(email);
-      if (account) {
-        result[email] = {
-          healthy: account.status === 1 && account.stat_warmup_score !== null && account.stat_warmup_score >= 80,
-          status: account.status,
-          score: account.stat_warmup_score,
-          warmupStatus: account.warmup_status,
-        };
-      } else {
-        result[email] = {
-          healthy: false,
-          status: 0,
-          score: null,
-          warmupStatus: 0,
-        };
-      }
-    }
-
-    return result;
-  }
-
-  // ==================== Warmup Management ====================
-
-  async enableWarmup(emails: string[]): Promise<BackgroundJob> {
-    return this.request<BackgroundJob>('/accounts/warmup/enable', {
-      method: 'POST',
-      body: JSON.stringify({ emails }),
-    });
-  }
-
-  async disableWarmup(emails: string[]): Promise<BackgroundJob> {
-    return this.request<BackgroundJob>('/accounts/warmup/disable', {
-      method: 'POST',
-      body: JSON.stringify({ emails }),
-    });
-  }
-
-  async getWarmupAnalytics(emails: string[]): Promise<WarmupAnalytics> {
-    return this.request<WarmupAnalytics>('/accounts/warmup-analytics', {
-      method: 'POST',
-      body: JSON.stringify({ emails }),
-    });
-  }
-
-  // ==================== Email Verification ====================
-
-  async verifyEmails(emails: string[]): Promise<VerificationResult[]> {
-    const response = await this.request<{ results?: VerificationResult[] }>('/leads/verify', {
-      method: 'POST',
-      body: JSON.stringify({ emails }),
-    });
-    return response.results || [];
-  }
-
-  async verifyEmail(email: string): Promise<VerificationResult | null> {
-    const results = await this.verifyEmails([email]);
-    return results[0] || null;
-  }
-
-  // ==================== Campaign Management ====================
-
-  async createCampaign(params: CampaignParams & Record<string, any>): Promise<Campaign> {
-    return this.request<Campaign>('/campaigns', {
-      method: 'POST',
-      body: JSON.stringify(params),
-    });
-  }
-
-  async activateCampaign(campaignId: string): Promise<void> {
-    await this.request<void>(`/campaigns/${campaignId}/activate`, {
-      method: 'POST',
-    });
-  }
-
-  async listCampaigns(limit: number = 100): Promise<Campaign[]> {
-    const response = await this.request<{ items?: Campaign[] }>(`/campaigns?limit=${limit}`);
-    return response.items || [];
-  }
-
-  async getCampaign(campaignId: string): Promise<Campaign | null> {
-    try {
-      return await this.request<Campaign>(`/campaigns/${campaignId}`);
-    } catch (err: any) {
-      if (err.message?.includes('404')) {
-        return null;
-      }
-      throw err;
-    }
-  }
-
-  async addLeadsToCampaign(campaignId: string, leads: Lead[]): Promise<void> {
-    await this.request<void>(`/campaigns/${campaignId}/leads`, {
-      method: 'POST',
-      body: JSON.stringify({ leads }),
-    });
-  }
-
-  async createLead(lead: {
-    email: string;
-    first_name?: string;
-    last_name?: string;
-    company_name?: string;
-    website?: string;
-    phone?: string;
-    campaign: string;
-    personalization?: Record<string, any>;
-  }): Promise<Record<string, any>> {
-    return this.request<Record<string, any>>('/leads', {
-      method: 'POST',
-      body: JSON.stringify(lead),
-    });
-  }
-
-  async mapAccountsToCampaign(campaignId: string, accountEmails: string[]): Promise<void> {
-    if (accountEmails.length === 0) {
-      return;
-    }
-
-    const accounts = await this.listAccounts(500);
-    const byEmail = new Map(accounts.map((account: any) => [account.email, account]));
-    const mappedAccounts = accountEmails
-      .map(email => byEmail.get(email))
-      .filter(Boolean) as any[];
-
-    if (mappedAccounts.length === 0) {
-      throw new Error('No Instantly accounts found for campaign mapping');
-    }
-
-    // Instantly has changed this payload shape in the past; attempt known variants.
-    const payloadCandidates = [
-      {
-        campaign: campaignId,
-        accounts: mappedAccounts.map(a => a.id || a.uuid || a.account_id || a.email).filter(Boolean),
+  try {
+    console.log(`[Instantly] ${options.method || 'GET'} ${endpoint}`);
+    const resp = await fetch(url, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${API_KEY}`,
+        'Content-Type': 'application/json',
+        ...(options.headers as Record<string, string> || {}),
       },
-      {
-        campaign_id: campaignId,
-        account_ids: mappedAccounts.map(a => a.id || a.uuid || a.account_id).filter(Boolean),
-      },
-      {
-        campaign: campaignId,
-        account_emails: mappedAccounts.map(a => a.email).filter(Boolean),
-      },
-    ];
+      signal: controller.signal,
+    });
 
-    let lastError: Error | null = null;
-    for (const payload of payloadCandidates) {
-      try {
-        await this.request<void>('/account-campaign-mappings', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        return;
-      } catch (err: any) {
-        lastError = err;
-      }
-    }
-
-    throw lastError || new Error('Failed to map accounts to campaign');
-  }
-
-  async getCampaignAnalytics(campaignId: string): Promise<CampaignAnalytics | null> {
-    try {
-      return await this.request<CampaignAnalytics>(`/campaigns/${campaignId}/analytics`);
-    } catch (err: any) {
-      if (err.message?.includes('404')) {
-        return null;
-      }
-      throw err;
-    }
-  }
-
-  // ==================== ChannelAdapter Interface ====================
-
-  async send(prospect: Prospect, action: string, content?: string): Promise<TouchpointResult> {
-    if (!this.validateProspect(prospect, ['email'])) {
-      return { success: false, error: 'Email address required' };
-    }
-
-    if (!this.isValidEmail(prospect.email!)) {
-      return { success: false, error: 'Invalid email format', outcome: 'bounced' };
-    }
-
-    // Note: For Instantly, we don't send directly - we add to campaign
-    // The actual sending is handled by Instantly's infrastructure
-    console.log(`[Instantly] Would add ${prospect.email} to campaign for ${action}`);
-    
-    return {
-      success: true,
-      outcome: 'queued',
-      metadata: {
-        timestamp: new Date().toISOString(),
-        action,
-        email: prospect.email,
-        note: 'Use addLeadsToCampaign() to actually queue leads',
-      },
-    };
-  }
-
-  async checkStatus(prospect: Prospect): Promise<string> {
-    return prospect.emailState || 'not_sent';
-  }
-
-  // ==================== Utilities ====================
-
-  private isValidEmail(email: string): boolean {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  }
-
-  /**
-   * Clear the account cache
-   */
-  clearCache(): void {
-    this.accountCache.clear();
-    console.log('[Instantly] Account cache cleared');
-  }
-
-  /**
-   * Get all healthy sender emails from a list
-   */
-  async filterHealthyEmails(emails: string[]): Promise<string[]> {
-    const healthStatus = await this.getHealthStatus(emails);
-    return emails.filter(email => healthStatus[email]?.healthy);
-  }
-
-  /**
-   * Get the best sender email (highest warmup score)
-   */
-  async getBestSender(emails: string[]): Promise<string | null> {
-    const accounts = await this.listAccounts();
-    const accountMap = new Map(accounts.map(a => [a.email, a]));
-
-    let bestEmail: string | null = null;
-    let bestScore = -1;
-
-    for (const email of emails) {
-      const account = accountMap.get(email);
-      if (account && 
-          account.status === 1 && 
-          account.stat_warmup_score !== null &&
-          account.stat_warmup_score > bestScore) {
-        bestScore = account.stat_warmup_score;
-        bestEmail = email;
-      }
-    }
-
-    return bestEmail;
+    clearTimeout(timer);
+    const text = await resp.text();
+    if (!resp.ok) throw new Error(`Instantly ${resp.status}: ${text.slice(0, 300)}`);
+    if (!text.trim()) return {} as T;
+    return JSON.parse(text) as T;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
-// Singleton instance for reuse
-let instantlyAdapterInstance: InstantlyAdapter | null = null;
+// ── Accounts ──────────────────────────────────────────────────────────────────
 
-export function getInstantlyAdapter(): InstantlyAdapter {
-  if (!instantlyAdapterInstance) {
-    instantlyAdapterInstance = new InstantlyAdapter();
-  }
-  return instantlyAdapterInstance;
+export async function listAccounts(): Promise<InstantlyAccount[]> {
+  const d = await req<{ items?: InstantlyAccount[] }>(`/accounts?limit=${MAX_LIMIT}`);
+  return d.items || [];
 }
+
+export async function getHealthySenders(minScore = 80): Promise<string[]> {
+  const accounts = await listAccounts();
+  return accounts
+    .filter(a => a.status === 1 && (a.warmup_score === undefined || a.warmup_score >= minScore))
+    .map(a => a.email)
+    .filter(e => e !== 'contact@renderwise.net'); // exclude main domain
+}
+
+// ── Campaigns ─────────────────────────────────────────────────────────────────
+
+export async function listCampaigns(): Promise<Campaign[]> {
+  const d = await req<{ items?: Campaign[] }>(`/campaigns?limit=${MAX_LIMIT}`);
+  return d.items || [];
+}
+
+export async function getCampaign(id: string): Promise<Campaign> {
+  return req<Campaign>(`/campaigns/${id}`);
+}
+
+export async function createCampaign(
+  name: string,
+  senders: string[],
+  sequences: Sequence[],
+  options?: { timezone?: string; from?: string; to?: string; days?: Record<string, boolean> }
+): Promise<Campaign> {
+  const tz = options?.timezone || 'America/Detroit';
+  const from = options?.from || '09:00';
+  const to = options?.to || '17:00';
+  const days = options?.days || { '1': true, '2': true, '3': true, '4': true, '5': true };
+
+  // Create with schedule
+  const campaign = await req<Campaign>('/campaigns', {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      campaign_schedule: {
+        schedules: [{ name: 'Schedule', timing: { from, to }, days, timezone: tz }],
+      },
+    }),
+  });
+
+  // Map senders + set sequences
+  await req(`/campaigns/${campaign.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ email_list: senders, sequences }),
+  });
+
+  console.log(`[Instantly] Created campaign "${name}" (${campaign.id}) with ${senders.length} senders`);
+  return campaign;
+}
+
+export async function activateCampaign(id: string): Promise<void> {
+  await req(`/campaigns/${id}/activate`, { method: 'POST', body: '{}' });
+}
+
+export async function deactivateCampaign(id: string): Promise<void> {
+  await req(`/campaigns/${id}/deactivate`, { method: 'POST', body: '{}' });
+}
+
+export async function deleteCampaign(id: string): Promise<void> {
+  await req(`/campaigns/${id}`, { method: 'DELETE' });
+}
+
+// ── Leads ─────────────────────────────────────────────────────────────────────
+
+export async function addLead(
+  campaignId: string,
+  email: string,
+  data?: { firstName?: string; lastName?: string; companyName?: string; website?: string; phone?: string; custom?: Record<string, string> }
+): Promise<Lead> {
+  const body: any = { campaign_id: campaignId, email };
+  if (data?.firstName) body.first_name = data.firstName;
+  if (data?.lastName) body.last_name = data.lastName;
+  if (data?.companyName) body.company_name = data.companyName;
+  if (data?.website) body.website = data.website;
+  if (data?.phone) body.phone = data.phone;
+  if (data?.custom) body.custom_variables = data.custom;
+  return req<Lead>('/leads', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function listLeads(campaignId: string): Promise<Lead[]> {
+  const d = await req<{ items?: Lead[] }>(`/leads?campaign_id=${campaignId}&limit=${MAX_LIMIT}`);
+  return d.items || [];
+}
+
+// ── Convenience: full send flow ───────────────────────────────────────────────
+
+export async function sendCampaign(
+  name: string,
+  senders: string[],
+  sequences: Sequence[],
+  leads: Array<{ email: string; firstName?: string; lastName?: string; companyName?: string; website?: string }>
+): Promise<string> {
+  const campaign = await createCampaign(name, senders, sequences);
+  for (const lead of leads) {
+    await addLead(campaign.id, lead.email, lead);
+  }
+  await activateCampaign(campaign.id);
+  console.log(`[Instantly] Campaign "${name}" activated with ${leads.length} leads`);
+  return campaign.id;
+}
+
+// ── Class wrapper for backward compat ─────────────────────────────────────────
+
+export class InstantlyAdapter {
+  listAccounts = listAccounts;
+  getHealthySenders = getHealthySenders;
+  listCampaigns = listCampaigns;
+  getCampaign = getCampaign;
+  createCampaign = createCampaign;
+  activateCampaign = activateCampaign;
+  deactivateCampaign = deactivateCampaign;
+  deleteCampaign = deleteCampaign;
+  addLead = addLead;
+  listLeads = listLeads;
+  sendCampaign = sendCampaign;
+}
+
+export default InstantlyAdapter;
