@@ -1,21 +1,8 @@
-// Email Adapter — AgentMail integration with Instantly.ai health gate
-// Sends real emails via AgentMail API and logs to Supabase
-// Checks Instantly.ai warmup health before sending
+// Email Adapter — Instantly campaign-based delivery with warmup health gate
 
 import { BaseChannelAdapter } from './base-adapter';
 import { Prospect, TouchpointResult } from '../types';
 import { InstantlyAdapter } from './instantly-adapter';
-
-interface AgentMailRecipient {
-  email: string;
-  name?: string;
-}
-
-interface AgentMailMessage {
-  to: AgentMailRecipient[];
-  subject: string;
-  body: string;
-}
 
 // Available sender inboxes for rotation
 const SENDER_INBOXES = [
@@ -25,27 +12,26 @@ const SENDER_INBOXES = [
   'alex.turner@siteflowagency.org',
   'hello@siteflowagency.org',
   'mike@nextwavedesigns.org',
-  'mike.chen@nextwavedesigns.org',
-  'hello@nextwavedesigns.org',
 ];
 
 // Minimum warmup score required to send emails
 const MIN_WARMUP_SCORE = 80;
+const CAMPAIGN_TIMEZONE = 'America/New_York';
+const CAMPAIGN_NAME_PREFIX = 'RenderWise Outbound';
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 1000;
 
 export class EmailAdapter extends BaseChannelAdapter {
   name = 'email' as const;
-  private apiKey: string;
-  private validInboxes: Set<string> | null = null;
-  private inboxValidationPromise: Promise<void> | null = null;
   private instantlyAdapter: InstantlyAdapter | null = null;
   private healthCheckCache: Map<string, { healthy: boolean; timestamp: number }> = new Map();
   private readonly HEALTH_CACHE_TTL_MS = 60000; // 1 minute cache
+  private campaignCache: { date: string; campaignId: string } | null = null;
 
-  constructor(apiKey?: string) {
+  constructor() {
     super();
-    this.apiKey = apiKey || process.env.AGENTMAIL_API_KEY || '';
-    if (!this.apiKey) {
-      console.warn('[Email] WARNING: AGENTMAIL_API_KEY not set');
+    if (!process.env.INSTANTLY_API_KEY) {
+      console.warn('[Email] WARNING: INSTANTLY_API_KEY not set');
     }
   }
 
@@ -57,6 +43,43 @@ export class EmailAdapter extends BaseChannelAdapter {
       this.instantlyAdapter = new InstantlyAdapter();
     }
     return this.instantlyAdapter;
+  }
+
+  private getCampaignDateEt(): string {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: CAMPAIGN_TIMEZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(new Date());
+
+    const year = parts.find(part => part.type === 'year')?.value || '0000';
+    const month = parts.find(part => part.type === 'month')?.value || '00';
+    const day = parts.find(part => part.type === 'day')?.value || '00';
+
+    return `${year}-${month}-${day}`;
+  }
+
+  private getCampaignName(dateEt: string): string {
+    return `${CAMPAIGN_NAME_PREFIX} - ${dateEt}`;
+  }
+
+  private async withRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        if (attempt >= MAX_RETRIES) {
+          throw err;
+        }
+
+        const backoffMs = BASE_RETRY_DELAY_MS * Math.pow(3, attempt - 1);
+        console.warn(`[Email] ${label} failed (attempt ${attempt}/${MAX_RETRIES}): ${err.message}. Retrying in ${backoffMs}ms`);
+        await this.sleep(backoffMs);
+      }
+    }
+
+    throw new Error(`${label} failed: max retries exceeded`);
   }
 
   /**
@@ -93,13 +116,13 @@ export class EmailAdapter extends BaseChannelAdapter {
     if (needCheck.length > 0) {
       try {
         const healthStatus = await instantly.getHealthStatus(needCheck);
-        
+
         for (const [email, status] of Object.entries(healthStatus)) {
           this.healthCheckCache.set(email, {
             healthy: status.healthy,
-            timestamp: now
+            timestamp: now,
           });
-          
+
           if (status.healthy) {
             return email;
           }
@@ -129,72 +152,107 @@ export class EmailAdapter extends BaseChannelAdapter {
     const instantly = this.getInstantlyAdapter();
     return instantly.getHealthStatus(SENDER_INBOXES);
   }
-  
+
   /**
-   * Validate inboxes on first use by fetching from AgentMail API
+   * Ensure a daily campaign exists, is active, and has healthy sender accounts mapped.
    */
-  private async validateInboxes(): Promise<void> {
-    // If already validated, return immediately
-    if (this.validInboxes !== null) {
-      return;
-    }
-    
-    // If validation is in progress, wait for it
-    if (this.inboxValidationPromise !== null) {
-      return this.inboxValidationPromise;
-    }
-    
-    // Start validation
-    this.inboxValidationPromise = this.fetchValidInboxes();
-    return this.inboxValidationPromise;
-  }
-  
-  private async fetchValidInboxes(): Promise<void> {
-    console.log('[Email] Fetching valid inboxes from AgentMail...');
-    
-    try {
-      const response = await fetch('https://api.agentmail.to/v0/inboxes', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      
-      if (!response.ok) {
-        console.error(`[Email] Failed to fetch inboxes: ${response.status}`);
-        // Fall back to allowing all configured inboxes
-        this.validInboxes = new Set(SENDER_INBOXES);
-        return;
+  async ensureCampaign(preferredInbox?: string): Promise<{ campaignId: string; mappedAccounts: string[]; selectedInbox: string }> {
+    const instantly = this.getInstantlyAdapter();
+    const dateEt = this.getCampaignDateEt();
+    const campaignName = this.getCampaignName(dateEt);
+
+    // Keep sender rotation logic by prioritizing the rotated sender first.
+    const rotatedInbox = preferredInbox || this.pickInbox(dateEt);
+
+    let healthySenders = await instantly.filterHealthyEmails(SENDER_INBOXES);
+
+    if (preferredInbox) {
+      const preferredHealthy = await this.getHealthyInbox(preferredInbox);
+      if (preferredHealthy && !healthySenders.includes(preferredHealthy)) {
+        healthySenders.unshift(preferredHealthy);
       }
-      
-      const data: any = await response.json();
-      const inboxes = data.inboxes || data.data || [];
-      
-      // Extract email addresses from the response
-      const validEmails = inboxes.map((inbox: any) => inbox.email || inbox.id || inbox);
-      this.validInboxes = new Set(validEmails);
-      
-      console.log(`[Email] Loaded ${this.validInboxes.size} valid inboxes from AgentMail`);
-    } catch (err: any) {
-      console.error('[Email] Error fetching inboxes:', err.message);
-      // Fall back to allowing all configured inboxes
-      this.validInboxes = new Set(SENDER_INBOXES);
     }
-  }
-  
-  /**
-   * Check if an inbox is valid (exists in AgentMail)
-   */
-  private isInboxValid(inboxEmail: string): boolean {
-    if (this.validInboxes === null) {
-      // Validation hasn't completed yet, allow by default
-      return true;
+
+    if (healthySenders.length === 0) {
+      console.error(`[Email] ❌ Health gate blocked: No healthy sender domains available (warmup score < ${MIN_WARMUP_SCORE})`);
+      throw new Error(`All sender domains unhealthy (warmup score < ${MIN_WARMUP_SCORE}). Email sequence paused.`);
     }
-    return this.validInboxes.has(inboxEmail);
+
+    // Place preferred/rotated sender first in mapping order.
+    if (healthySenders.includes(rotatedInbox)) {
+      healthySenders = [rotatedInbox, ...healthySenders.filter(e => e !== rotatedInbox)];
+    }
+
+    let campaignId = this.campaignCache?.date === dateEt ? this.campaignCache.campaignId : '';
+
+    if (!campaignId) {
+      const campaigns = await this.withRetry('list campaigns', () => instantly.listCampaigns(200));
+      const existing = campaigns.find(c => c.name === campaignName);
+
+      if (existing) {
+        campaignId = existing.id;
+      } else {
+        const created = await this.withRetry('create campaign', () => instantly.createCampaign({
+          name: campaignName,
+          campaign_schedule: {
+            schedules: [
+              {
+                name: 'Business Hours ET',
+                timing: {
+                  from: '09:00',
+                  to: '17:00',
+                },
+                days: {
+                  monday: true,
+                  tuesday: true,
+                  wednesday: true,
+                  thursday: true,
+                  friday: true,
+                  saturday: false,
+                  sunday: false,
+                },
+                timezone: CAMPAIGN_TIMEZONE,
+              },
+            ],
+          },
+        }));
+
+        campaignId = created.id;
+      }
+
+      this.campaignCache = { date: dateEt, campaignId };
+    }
+
+    await this.withRetry('activate campaign', async () => {
+      try {
+        await instantly.activateCampaign(campaignId);
+      } catch (err: any) {
+        // Activation is idempotent in practice; ignore already-active responses.
+        if (!String(err.message || '').toLowerCase().includes('already')) {
+          throw err;
+        }
+      }
+    });
+
+    await this.withRetry('map accounts to campaign', () => instantly.mapAccountsToCampaign(campaignId, healthySenders));
+
+    return {
+      campaignId,
+      mappedAccounts: healthySenders,
+      selectedInbox: healthySenders[0],
+    };
   }
 
   async send(prospect: Prospect, action: string, content?: string): Promise<TouchpointResult> {
+    return this.queueSend(prospect, action, content);
+  }
+
+  private async queueSend(
+    prospect: Prospect,
+    action: string,
+    content?: string,
+    preferredInboxOverride?: string
+  ): Promise<TouchpointResult> {
     if (!this.validateProspect(prospect, ['email'])) {
       return { success: false, error: 'Email address required' };
     }
@@ -202,9 +260,6 @@ export class EmailAdapter extends BaseChannelAdapter {
     if (!this.isValidEmail(prospect.email!)) {
       return { success: false, error: 'Invalid email format', outcome: 'bounced' };
     }
-
-    // Validate inboxes on first use
-    await this.validateInboxes();
 
     // Parse subject and body from content (format: "subject\n\nbody")
     let subject = 'Quick question';
@@ -216,62 +271,46 @@ export class EmailAdapter extends BaseChannelAdapter {
     }
 
     // Pick sender inbox (round-robin based on prospect email hash)
-    const preferredInbox = this.pickInbox(prospect.email!);
-    
-    // Health gate: Check Instantly warmup score before sending
-    const healthyInbox = await this.getHealthyInbox(preferredInbox);
-    
-    if (!healthyInbox) {
-      console.error(`[Email] ❌ Health gate blocked: No healthy sender domains available (warmup score < ${MIN_WARMUP_SCORE})`);
-      return { 
-        success: false, 
-        error: `All sender domains unhealthy (warmup score < ${MIN_WARMUP_SCORE}). Email sequence paused.`, 
-        outcome: 'paused' 
-      };
-    }
-    
-    if (healthyInbox !== preferredInbox) {
-      console.log(`[Email] ℹ️  Preferred inbox ${preferredInbox} unhealthy, using ${healthyInbox} instead`);
-    }
-    
-    const inboxEmail = healthyInbox;
-    
-    // Validate inbox exists
-    if (!this.isInboxValid(inboxEmail)) {
-      console.error(`[Email] Inbox ${inboxEmail} does not exist in AgentMail, skipping send`);
-      return { success: false, error: `Invalid inbox: ${inboxEmail}`, outcome: 'failed' };
-    }
-
-    console.log(`[Email] Sending "${subject}" to ${prospect.name} <${prospect.email}> from ${inboxEmail}`);
+    const preferredInbox = preferredInboxOverride || this.pickInbox(prospect.email!);
 
     try {
-      const result = await this.sendViaAgentMail(inboxEmail, {
-        to: [{ email: prospect.email!, name: prospect.name || undefined }],
-        subject,
-        body,
-      });
+      const { campaignId, selectedInbox } = await this.ensureCampaign(preferredInbox);
 
-      if (result.success) {
-        console.log(`[Email] ✓ Sent to ${prospect.email} via ${inboxEmail}`);
-        return {
-          success: true,
-          outcome: 'sent',
-          metadata: {
-            timestamp: new Date().toISOString(),
-            action,
-            email: prospect.email,
-            from: inboxEmail,
-            subject,
-            messageId: result.messageId,
-          },
-        };
-      } else {
-        console.error(`[Email] ✗ Failed: ${result.error}`);
-        return { success: false, error: result.error, outcome: 'failed' };
-      }
+      const instantly = this.getInstantlyAdapter();
+      await this.withRetry('create lead', () => instantly.createLead({
+        email: prospect.email!,
+        first_name: this.firstNameFromProspect(prospect),
+        last_name: this.lastNameFromProspect(prospect),
+        company_name: prospect.company,
+        website: prospect.website,
+        phone: prospect.phone,
+        campaign: campaignId,
+        personalization: {
+          subject,
+          body,
+          action,
+          preferred_sender: selectedInbox,
+        },
+      }));
+
+      console.log(`[Email] ✓ Queued ${prospect.email} in Instantly campaign ${campaignId} (preferred sender: ${selectedInbox})`);
+      return {
+        success: true,
+        outcome: 'queued',
+        metadata: {
+          timestamp: new Date().toISOString(),
+          action,
+          email: prospect.email,
+          from: selectedInbox,
+          subject,
+          campaignId,
+        },
+      };
     } catch (err: any) {
-      console.error(`[Email] ✗ Exception: ${err.message}`);
-      return { success: false, error: err.message, outcome: 'failed' };
+      const message = err.message || 'Unknown Instantly delivery error';
+      const outcome = message.includes('unhealthy') ? 'paused' : 'failed';
+      console.error(`[Email] ✗ ${message}`);
+      return { success: false, error: message, outcome };
     }
   }
 
@@ -297,167 +336,46 @@ export class EmailAdapter extends BaseChannelAdapter {
     if (!this.validateProspect(prospect, ['email'])) {
       return { success: false, error: 'Email address required' };
     }
-    
-    // Validate inboxes on first use
-    await this.validateInboxes();
 
-    // Health gate: Check Instantly warmup score before sending
-    const healthyInbox = await this.getHealthyInbox(fromInbox);
-    
-    if (!healthyInbox) {
-      console.error(`[Email] ❌ Health gate blocked: No healthy sender domains available (warmup score < ${MIN_WARMUP_SCORE})`);
-      return { 
-        success: false, 
-        error: `All sender domains unhealthy (warmup score < ${MIN_WARMUP_SCORE}). Email sequence paused.`, 
-        outcome: 'paused' 
-      };
-    }
-    
-    if (fromInbox && healthyInbox !== fromInbox) {
-      console.log(`[Email] ℹ️  Requested inbox ${fromInbox} unhealthy, using ${healthyInbox} instead`);
-    }
-    
-    const inboxEmail = healthyInbox;
-    
-    // Validate inbox exists
-    if (!this.isInboxValid(inboxEmail)) {
-      console.error(`[Email] Inbox ${inboxEmail} does not exist in AgentMail, skipping send`);
-      return { success: false, error: `Invalid inbox: ${inboxEmail}`, outcome: 'failed' };
+    if (prospect.email && !this.isValidEmail(prospect.email)) {
+      return { success: false, error: 'Invalid email format', outcome: 'bounced' };
     }
 
-    console.log(`[Email] ${action}: "${subject}" to ${prospect.name} <${prospect.email}> from ${inboxEmail}`);
+    const content = `${subject}\n\n${body}`;
 
-    try {
-      const result = await this.sendViaAgentMail(inboxEmail, {
-        to: [{ email: prospect.email!, name: prospect.name || undefined }],
-        subject,
-        body,
-      });
-
-      if (result.success) {
-        console.log(`[Email] ✓ ${action} sent to ${prospect.email}`);
+    if (fromInbox) {
+      // Keep explicit sender override path: enforce health gate for this inbox.
+      const healthyInbox = await this.getHealthyInbox(fromInbox);
+      if (!healthyInbox) {
         return {
-          success: true,
-          outcome: 'sent',
-          metadata: {
-            timestamp: new Date().toISOString(),
-            action,
-            email: prospect.email,
-            from: inboxEmail,
-            subject,
-            messageId: result.messageId,
-          },
+          success: false,
+          error: `Requested inbox ${fromInbox} is unhealthy (warmup score < ${MIN_WARMUP_SCORE}).`,
+          outcome: 'paused',
         };
-      } else {
-        return { success: false, error: result.error, outcome: 'failed' };
       }
-    } catch (err: any) {
-      return { success: false, error: err.message, outcome: 'failed' };
-    }
-  }
-
-  private async sendViaAgentMail(
-    inboxEmail: string,
-    message: AgentMailMessage
-  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    // First, resolve inbox ID from email
-    const inboxId = await this.resolveInboxId(inboxEmail);
-    if (!inboxId) {
-      return { success: false, error: `Could not resolve inbox for ${inboxEmail}` };
-    }
-
-    const encodedInbox = encodeURIComponent(inboxId);
-    const url = `https://api.agentmail.to/v0/inboxes/${encodedInbox}/messages/send`;
-    
-    // Retry configuration
-    const MAX_RETRIES = 3;
-    const BASE_DELAY_MS = 1000;
-    
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      console.log(`[Email] POST ${url} (attempt ${attempt}/${MAX_RETRIES})`);
-      
-      try {
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            to: message.to[0].email,
-            subject: message.subject,
-            text: message.body,
-            html: message.body.replace(/\n/g, '<br>'),
-          }),
-        });
-
-        const responseText = await response.text();
-        console.log(`[Email] Response ${response.status}: ${responseText.substring(0, 200)}`);
-
-        if (response.ok) {
-          let data: any;
-          try {
-            data = JSON.parse(responseText);
-          } catch {
-            data = {};
-          }
-          return { success: true, messageId: data.id || data.message_id };
-        }
-
-        // Handle error cases
-        const status = response.status;
-        
-        // 429: Rate limited - respect Retry-After header or wait 5s
-        if (status === 429) {
-          const retryAfter = response.headers.get('Retry-After');
-          const delayMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 5000;
-          console.log(`[Email] Rate limited (429), waiting ${delayMs}ms before retry`);
-          await this.sleep(delayMs);
-          continue; // Retry
-        }
-        
-        // 5xx: Server error - retry with exponential backoff
-        if (status >= 500) {
-          if (attempt < MAX_RETRIES) {
-            const delayMs = BASE_DELAY_MS * Math.pow(3, attempt - 1); // 1s, 3s, 9s
-            console.log(`[Email] Server error (${status}), waiting ${delayMs}ms before retry ${attempt + 1}`);
-            await this.sleep(delayMs);
-            continue; // Retry
-          }
-          return { success: false, error: `AgentMail ${status}: ${responseText} (max retries exceeded)` };
-        }
-        
-        // 4xx (other than 429): Client error - don't retry
-        if (status >= 400 && status < 500) {
-          console.log(`[Email] Client error (${status}), not retrying`);
-          return { success: false, error: `AgentMail ${status}: ${responseText}` };
-        }
-        
-        // Other errors - don't retry
-        return { success: false, error: `AgentMail ${status}: ${responseText}` };
-        
-      } catch (err: any) {
-        console.error(`[Email] Network error on attempt ${attempt}:`, err.message);
-        if (attempt < MAX_RETRIES) {
-          const delayMs = BASE_DELAY_MS * Math.pow(3, attempt - 1);
-          console.log(`[Email] Waiting ${delayMs}ms before retry ${attempt + 1}`);
-          await this.sleep(delayMs);
-        } else {
-          return { success: false, error: `Network error: ${err.message} (max retries exceeded)` };
-        }
+      if (healthyInbox !== fromInbox) {
+        console.log(`[Email] Requested inbox ${fromInbox} unhealthy, using ${healthyInbox}`);
       }
     }
-    
-    return { success: false, error: 'Max retries exceeded' };
+
+    return this.queueSend(prospect, action, content, fromInbox);
   }
-  
+
+  private firstNameFromProspect(prospect: Prospect): string | undefined {
+    if (!prospect.name) return undefined;
+    const [first] = prospect.name.trim().split(/\s+/);
+    return first || undefined;
+  }
+
+  private lastNameFromProspect(prospect: Prospect): string | undefined {
+    if (!prospect.name) return undefined;
+    const parts = prospect.name.trim().split(/\s+/);
+    if (parts.length < 2) return undefined;
+    return parts.slice(1).join(' ');
+  }
+
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  private async resolveInboxId(email: string): Promise<string> {
-    // AgentMail uses the email address itself as the inbox_id
-    return email;
   }
 
   private pickInbox(prospectEmail: string): string {
