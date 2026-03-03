@@ -146,8 +146,16 @@ async function processWebhook(
   if (newEmailState && prospectId) {
     await updateProspectState(prospectId, newEmailState, newPipelineState, sbHeaders);
     console.log(`[email-webhook] Updated prospect ${prospectId}: email_state=${newEmailState}${newPipelineState ? `, pipeline_state=${newPipelineState}` : ''}`);
+
+  // Notify Discord
+  const prospectName2 = await getProspectName(prospectId);
+  await notifyDiscord(eventType, email, prospectName2, payload);
   } else if (newEmailState && !prospectId) {
     console.log(`[email-webhook] No prospect found for ${email}, event logged but state not updated`);
+
+  // Notify Discord for all event types
+  const prospectName = prospectId ? await getProspectName(prospectId) : null;
+  await notifyDiscord(eventType, email, prospectName, payload);
   }
 }
 
@@ -225,4 +233,72 @@ async function updateProspectState(
   } catch (err: any) {
     console.error('[email-webhook] Error updating prospect:', err.message);
   }
+}
+
+// ---- Discord Notification ----
+const DISCORD_WEBHOOK_EMAIL = process.env.DISCORD_WEBHOOK_EMAIL || '';
+
+const EVENT_EMOJI: Record<string, string> = {
+  'reply_received': '📩',
+  'email_sent': '📤',
+  'email_opened': '👁️',
+  'lead_unsubscribed': '🚫',
+};
+
+async function notifyDiscord(
+  eventType: string,
+  email: string,
+  prospectName: string | null,
+  payload: Record<string, any>
+): Promise<void> {
+  if (!DISCORD_WEBHOOK_EMAIL) {
+    console.log('[email-webhook] No DISCORD_WEBHOOK_EMAIL set, skipping notification');
+    return;
+  }
+
+  const emoji = EVENT_EMOJI[eventType] || '📧';
+  const name = prospectName || email;
+  const campaign = payload.campaign_name || 'Unknown campaign';
+  
+  let message: string;
+  
+  switch (eventType) {
+    case 'reply_received':
+      message = `${emoji} **REPLY** from **${name}** (${email})\nCampaign: ${campaign}\n${payload.reply_text ? `\n> ${payload.reply_text.slice(0, 500)}` : ''}`;
+      break;
+    case 'email_opened':
+      message = `${emoji} **Opened** by **${name}** (${email})\nCampaign: ${campaign}`;
+      break;
+    case 'lead_unsubscribed':
+      message = `${emoji} **Unsubscribed**: **${name}** (${email})\nCampaign: ${campaign}`;
+      break;
+    case 'email_sent':
+      message = `${emoji} **Sent** to **${name}** (${email})\nCampaign: ${campaign}`;
+      break;
+    default:
+      message = `${emoji} **${eventType}** — **${name}** (${email})\nCampaign: ${campaign}`;
+  }
+
+  try {
+    await fetch(DISCORD_WEBHOOK_EMAIL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: message }),
+    });
+    console.log(`[email-webhook] Discord notification sent for ${eventType}`);
+  } catch (err: any) {
+    console.error('[email-webhook] Discord notification failed:', err.message);
+  }
+}
+
+async function getProspectName(prospectId: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `${SUPABASE_URL}/rest/v1/prospects?id=eq.${encodeURIComponent(prospectId)}&select=name&limit=1`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as Array<{ name: string }>;
+    return data?.[0]?.name || null;
+  } catch { return null; }
 }
