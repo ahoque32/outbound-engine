@@ -3,7 +3,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { twilioClient, TwilioCallResult } from './twilio-client';
 import { voiceAgent, ConversationResult } from './voice-agent';
 import { voicemailHandler, AMDResult, VoicemailDeliveryResult } from './voicemail-handler';
-import { personalizeScript, ProspectData, generateObservation } from './call-script';
+import { personalizeScript, ProspectData, generateObservation, VARIANT_AGENT_NAMES, DEFAULT_AGENT_CONFIG } from './call-script';
 import { handleObjection, detectInterest } from './objection-handler';
 import { selectVariant, VariantConfig } from '../core/ab-router';
 import * as dotenv from 'dotenv';
@@ -409,6 +409,7 @@ export class CallEngine {
         specific_detail: prospect.specificDetail || '',
         desired_benefit: prospect.desiredBenefit || '',
         email: prospect.email || '',
+        agent_name: (VARIANT_AGENT_NAMES[variant.id] || 'Ava'),
       };
 
       if (this.config.dryRun) {

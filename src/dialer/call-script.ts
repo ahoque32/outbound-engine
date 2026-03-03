@@ -71,8 +71,17 @@ export const SCRIPT_TEMPLATES: Record<string, ScriptTemplate> = {
 };
 
 // Default agent configuration
+// Agent names mapped to variant IDs
+export const VARIANT_AGENT_NAMES: Record<string, string> = {
+  'ava-warm': 'Ava',
+  'ava-direct': 'Ava',
+  'ava-warm-flirty': 'Ava',
+  'chris-charming': 'Chris',
+  'eric-authority': 'Eric',
+};
+
 export const DEFAULT_AGENT_CONFIG = {
-  name: 'Alex',
+  name: 'Ava',
   company: 'RenderWiseAI',
   phone: '+17704077842',
 };
@@ -204,6 +213,7 @@ OBJECTION HANDLING:
 - "Call back later" → "No problem! When's a better time? I'll make sure to call back then." (schedule callback)
 
 RULES:
+- Your name is ${DEFAULT_AGENT_CONFIG.name}. NEVER use any other name. If corrected or confused, always restate your actual name.
 - Be friendly, professional, and concise
 - Listen actively and respond naturally
 - Don't be pushy — one objection response then move on
