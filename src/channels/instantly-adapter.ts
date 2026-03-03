@@ -259,10 +259,16 @@ export class InstantlyAdapter extends BaseChannelAdapter {
 
   // ==================== Campaign Management ====================
 
-  async createCampaign(params: CampaignParams): Promise<Campaign> {
+  async createCampaign(params: CampaignParams & Record<string, any>): Promise<Campaign> {
     return this.request<Campaign>('/campaigns', {
       method: 'POST',
       body: JSON.stringify(params),
+    });
+  }
+
+  async activateCampaign(campaignId: string): Promise<void> {
+    await this.request<void>(`/campaigns/${campaignId}/activate`, {
+      method: 'POST',
     });
   }
 
@@ -287,6 +293,69 @@ export class InstantlyAdapter extends BaseChannelAdapter {
       method: 'POST',
       body: JSON.stringify({ leads }),
     });
+  }
+
+  async createLead(lead: {
+    email: string;
+    first_name?: string;
+    last_name?: string;
+    company_name?: string;
+    website?: string;
+    phone?: string;
+    campaign: string;
+    personalization?: Record<string, any>;
+  }): Promise<Record<string, any>> {
+    return this.request<Record<string, any>>('/leads', {
+      method: 'POST',
+      body: JSON.stringify(lead),
+    });
+  }
+
+  async mapAccountsToCampaign(campaignId: string, accountEmails: string[]): Promise<void> {
+    if (accountEmails.length === 0) {
+      return;
+    }
+
+    const accounts = await this.listAccounts(500);
+    const byEmail = new Map(accounts.map((account: any) => [account.email, account]));
+    const mappedAccounts = accountEmails
+      .map(email => byEmail.get(email))
+      .filter(Boolean) as any[];
+
+    if (mappedAccounts.length === 0) {
+      throw new Error('No Instantly accounts found for campaign mapping');
+    }
+
+    // Instantly has changed this payload shape in the past; attempt known variants.
+    const payloadCandidates = [
+      {
+        campaign: campaignId,
+        accounts: mappedAccounts.map(a => a.id || a.uuid || a.account_id || a.email).filter(Boolean),
+      },
+      {
+        campaign_id: campaignId,
+        account_ids: mappedAccounts.map(a => a.id || a.uuid || a.account_id).filter(Boolean),
+      },
+      {
+        campaign: campaignId,
+        account_emails: mappedAccounts.map(a => a.email).filter(Boolean),
+      },
+    ];
+
+    let lastError: Error | null = null;
+    for (const payload of payloadCandidates) {
+      try {
+        await this.request<void>('/account-campaign-mappings', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        });
+        return;
+      } catch (err: any) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error('Failed to map accounts to campaign');
   }
 
   async getCampaignAnalytics(campaignId: string): Promise<CampaignAnalytics | null> {
