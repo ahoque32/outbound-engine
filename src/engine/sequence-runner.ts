@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { EmailAdapter } from '../channels/email-adapter';
+import { getHealthySenders } from '../channels/instantly-adapter';
 
 // Warmup rate limits per inbox per day
 const WARMUP_DAILY_LIMIT = 30;
@@ -313,7 +314,7 @@ export class SequenceRunner {
 
     // Total across all inboxes
     const totalSent = (limits || []).reduce((sum: number, l: any) => sum + (l.count || 0), 0);
-    const totalLimit = EmailAdapter.getSenderInboxes().length * WARMUP_DAILY_LIMIT;
+    const senders = await getHealthySenders(); const totalLimit = senders.length * WARMUP_DAILY_LIMIT;
 
     if (totalSent >= totalLimit) {
       return { allowed: false, reason: `Daily total limit reached (${totalSent}/${totalLimit})` };

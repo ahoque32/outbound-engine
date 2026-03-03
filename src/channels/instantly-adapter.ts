@@ -227,6 +227,7 @@ export class InstantlyAdapter {
   deleteCampaign = deleteCampaign;
   addLead = addLead;
   listLeads = listLeads;
+  async verifyEmails(emails: string[]): Promise<any[]> { console.warn("[Instantly] verifyEmails not implemented in v2"); return []; }
   sendCampaign = sendCampaign;
 }
 
