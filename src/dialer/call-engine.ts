@@ -16,8 +16,8 @@ const DRY_RUN = process.env.DRY_RUN === 'true';
 const CALL_COOLDOWN_DAYS = parseInt(process.env.CALL_COOLDOWN_DAYS || '3', 10);
 
 // Rate limits
-const MAX_CALLS_PER_DAY = 50;
-const MAX_CALLS_PER_HOUR = 10;
+const MAX_CALLS_PER_DAY = 75;
+const MAX_CALLS_PER_HOUR = 15;
 const MIN_GAP_BETWEEN_CALLS_MS = 30000; // 30 seconds
 
 // Business hours (9am-5pm)
@@ -62,7 +62,7 @@ export interface CallResult {
   callSid?: string;
   status: 'initiated' | 'ringing' | 'answered' | 'voicemail' | 'no_answer' | 'busy' | 'failed';
   amdResult?: AMDResult;
-  outcome?: 'interested' | 'not_interested' | 'callback' | 'email_requested' | 'booked' | 'no_answer' | 'voicemail' | 'failed';
+  outcome?: 'interested' | 'not_interested' | 'callback' | 'email_requested' | 'booked' | 'no_answer' | 'voicemail' | 'failed' | 'unknown';
   duration?: number;
   transcript?: string;
   recordingUrl?: string;
@@ -224,6 +224,7 @@ export class CallEngine {
         desired_benefit
       `)
       .not('phone', 'is', null)
+      .eq('voice_state', 'not_called')
       .in('pipeline_state', ['discovered', 'contacted', 'researched'])
       .limit(limit);
 
@@ -260,7 +261,6 @@ export class CallEngine {
       .select('prospect_id, outcome, callback_at')
       .in('prospect_id', prospectIds)
       .gte('created_at', cooldownDateStr)
-      .lt('created_at', `${today}T00:00:00Z`); // Exclude today's calls (already filtered)
     
     // Build a map of prospect_id -> most recent call info
     const recentCallsMap = new Map<string, { outcome: string; callbackAt?: string }>();
@@ -453,7 +453,7 @@ export class CallEngine {
 
         // ElevenLabs handles the full conversation
         // Outcome will be determined via post-call webhook or polling
-        callResult.outcome = 'interested'; // Default — webhook will update
+        callResult.outcome = 'unknown'; // Default until webhook updates
       }
 
       await this.updateCallLog(callLogId, {
@@ -465,6 +465,11 @@ export class CallEngine {
 
       callResult.success = true;
       callResult.duration = Math.floor((Date.now() - startTime) / 1000);
+
+      // If call was very short (< 5s), it's likely voicemail or hangup - not interested
+      if (callResult.duration < 5) {
+        callResult.outcome = 'voicemail';
+      }
 
       // Update call log with final result
       await this.updateCallLog(callLogId, {
@@ -493,6 +498,9 @@ export class CallEngine {
     // Update last call time
     this.lastCallTime = new Date();
 
+    // Update prospect's voice_state based on call outcome
+    await this.updateProspectVoiceState(prospect.id, callResult.outcome, callResult.status);
+
     console.log('[CallEngine.callProspect] Call completed:', {
       success: callResult.success,
       status: callResult.status,
@@ -502,6 +510,49 @@ export class CallEngine {
     console.log('[CallEngine.callProspect] =========================================\n');
 
     return callResult;
+  }
+
+  /**
+   * Update prospect's voice_state after call
+   */
+  private async updateProspectVoiceState(
+    prospectId: string, 
+    outcome?: string, 
+    status?: string
+  ): Promise<void> {
+    let newState: string;
+    
+    if (outcome === 'interested' || outcome === 'booked') {
+      newState = 'interested';
+    } else if (outcome === 'not_interested') {
+      newState = 'not_interested';
+    } else if (outcome === 'callback') {
+      newState = 'callback';
+    } else if (outcome === 'voicemail') {
+      newState = 'voicemail';
+    } else if (status === 'failed' || status === 'no_answer') {
+      newState = 'failed';
+    } else {
+      newState = 'called';
+    }
+
+    try {
+      const { error } = await this.supabase
+        .from('prospects')
+        .update({ 
+          voice_state: newState,
+          last_touchpoint_at: new Date().toISOString()
+        })
+        .eq('id', prospectId);
+
+      if (error) {
+        console.error('[CallEngine.updateProspectVoiceState] Error:', error);
+      } else {
+        console.log('[CallEngine.updateProspectVoiceState] Updated prospect', prospectId, 'to', newState);
+      }
+    } catch (err) {
+      console.error('[CallEngine.updateProspectVoiceState] Exception:', err);
+    }
   }
 
   /**
