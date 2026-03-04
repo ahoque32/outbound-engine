@@ -22,6 +22,42 @@ export class EmailAdapter extends BaseChannelAdapter {
   private todayDate: string | null = null;
 
   /**
+   * Base sequence used by today's campaign. Step 1 is agent-authored via lead custom variables.
+   */
+  private getCampaignSequence(): instantly.Sequence[] {
+    return [
+      {
+        steps: [
+          {
+            type: 'email',
+            delay: 0,
+            variants: [{
+              subject: '{{custom_subject}}',
+              body: '{{custom_body}}',
+            }],
+          },
+          {
+            type: 'email',
+            delay: 3,
+            variants: [{
+              subject: 'Re: your site improvements',
+              body: `<p>Hi {{first_name}},</p><p>Wanted to follow up on my note about your website.</p><p>I ran a quick audit and found 3 specific issues that are likely hurting your conversion rate:</p><p>• Slow mobile loading (losing ~30% of visitors)<br>• Confusing navigation flow<br>• No clear call-to-action above the fold</p><p>Happy to share the full audit — no cost, just thought it might be useful.</p><p>Book 15 mins here if you're curious: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p><p>Jake<br>RenderWiseAI</p>`,
+            }],
+          },
+          {
+            type: 'email',
+            delay: 3,
+            variants: [{
+              subject: 'Last note — your website',
+              body: `<p>Hi {{first_name}},</p><p>I'll keep this short since I know you're busy.</p><p>If you're happy with how your site is performing, no worries at all — just wanted to make sure this didn't get buried.</p><p>If you ever want that free audit I mentioned, just reply and I'll send it over.</p><p>Either way, best of luck!</p><p>Jake<br>RenderWiseAI</p><p>P.S. — Still have a few spots open this week: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p>`,
+            }],
+          },
+        ],
+      },
+    ];
+  }
+
+  /**
    * Get today's date string in ET
    */
   private getDateET(): string {
@@ -48,6 +84,10 @@ export class EmailAdapter extends BaseChannelAdapter {
     if (existing) {
       this.todayCampaignId = existing.id;
       this.todayDate = today;
+
+      await instantly.updateCampaign(existing.id, {
+        sequences: this.getCampaignSequence(),
+      });
       
       // Activate if not already
       if (existing.status !== 1) {
@@ -68,34 +108,7 @@ export class EmailAdapter extends BaseChannelAdapter {
     const campaign = await instantly.createCampaign(
       campaignName,
       validSenders,
-      [{
-        steps: [
-          {
-            type: 'email',
-            delay: 0,
-            variants: [{
-              subject: '{{first_name}}, quick question about your site',
-              body: `<p>Hi {{first_name}},</p><p>I was checking out your website and noticed a few things that might be costing you leads — slow load times, mobile layout issues, and a few UX friction points.</p><p>We help businesses like yours turn their websites into actual revenue generators. Recently redesigned a similar site and increased their inbound leads by 40% in the first month.</p><p>Worth a quick chat? Here's my calendar: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p><p>Best,<br>Jake<br>RenderWiseAI</p>`,
-            }],
-          },
-          {
-            type: 'email',
-            delay: 3,
-            variants: [{
-              subject: 'Re: your site improvements',
-              body: `<p>Hi {{first_name}},</p><p>Wanted to follow up on my note about your website.</p><p>I ran a quick audit and found 3 specific issues that are likely hurting your conversion rate:</p><p>• Slow mobile loading (losing ~30% of visitors)<br>• Confusing navigation flow<br>• No clear call-to-action above the fold</p><p>Happy to share the full audit — no cost, just thought it might be useful.</p><p>Book 15 mins here if you're curious: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p><p>Jake<br>RenderWiseAI</p>`,
-            }],
-          },
-          {
-            type: 'email',
-            delay: 3,
-            variants: [{
-              subject: 'Last note — your website',
-              body: `<p>Hi {{first_name}},</p><p>I'll keep this short since I know you're busy.</p><p>If you're happy with how your site is performing, no worries at all — just wanted to make sure this didn't get buried.</p><p>If you ever want that free audit I mentioned, just reply and I'll send it over.</p><p>Either way, best of luck!</p><p>Jake<br>RenderWiseAI</p><p>P.S. — Still have a few spots open this week: <a href="https://renderwiseai.com/calendar">renderwiseai.com/calendar</a></p>`,
-            }],
-          },
-        ],
-      }]
+      this.getCampaignSequence()
     );
 
     await instantly.activateCampaign(campaign.id);
@@ -125,6 +138,7 @@ export class EmailAdapter extends BaseChannelAdapter {
       const nameParts = (prospect.name || '').split(' ');
       const firstName = nameParts[0] || '';
       const lastName = nameParts.slice(1).join(' ') || '';
+      const customBody = body.includes('<') ? body : body.replace(/\n/g, '<br>');
 
       await instantly.addLead(campaignId, prospect.email, {
         firstName,
@@ -132,6 +146,10 @@ export class EmailAdapter extends BaseChannelAdapter {
         companyName: prospect.company,
         website: prospect.website,
         phone: prospect.phone,
+        custom: {
+          custom_subject: subject,
+          custom_body: customBody,
+        },
       });
 
       console.log(`[Email] ✓ Queued ${prospect.email} in campaign ${campaignId}`);
