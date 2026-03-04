@@ -71,6 +71,11 @@ export interface Sequence {
   steps: SequenceStep[];
 }
 
+export interface CampaignUpdate {
+  email_list?: string[];
+  sequences?: Sequence[];
+}
+
 // ── Request helper ────────────────────────────────────────────────────────────
 
 async function req<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -167,6 +172,13 @@ export async function activateCampaign(id: string): Promise<void> {
   await req(`/campaigns/${id}/activate`, { method: 'POST', body: '{}' });
 }
 
+export async function updateCampaign(id: string, payload: CampaignUpdate): Promise<void> {
+  await req(`/campaigns/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function deactivateCampaign(id: string): Promise<void> {
   await req(`/campaigns/${id}/deactivate`, { method: 'POST', body: '{}' });
 }
@@ -223,6 +235,7 @@ export class InstantlyAdapter {
   getCampaign = getCampaign;
   createCampaign = createCampaign;
   activateCampaign = activateCampaign;
+  updateCampaign = updateCampaign;
   deactivateCampaign = deactivateCampaign;
   deleteCampaign = deleteCampaign;
   addLead = addLead;
