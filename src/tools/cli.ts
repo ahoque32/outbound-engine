@@ -17,6 +17,7 @@ import {
   queueEmail,
   updateProspect,
   getTranscript,
+  updateCallLogOutcome,
 } from './index';
 
 interface ParsedArgs {
@@ -263,6 +264,16 @@ async function run(): Promise<void> {
         const email = positional[0];
         if (!email) throw new Error('ghl:check requires <email>');
         printJson(await getGHLContact(email));
+        return;
+      }
+
+      case 'calllog:update-outcome': {
+        const conversationId = positional[0];
+        if (!conversationId) throw new Error('calllog:update-outcome requires <conversationId>');
+        const outcome = getFlagString(flags, 'outcome');
+        if (!outcome) throw new Error('calllog:update-outcome requires --outcome <value>');
+        const notes = getFlagString(flags, 'notes');
+        printJson(await updateCallLogOutcome(conversationId, outcome, notes));
         return;
       }
 

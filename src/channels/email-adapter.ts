@@ -75,7 +75,7 @@ export class EmailAdapter extends BaseChannelAdapter {
       return this.todayCampaignId;
     }
 
-    const campaignName = `RenderWise Outbound - ${today}`;
+    const campaignName = `Hunter Outbound - ${today}`;
 
     // Check for existing campaign
     const campaigns = await instantly.listCampaigns();
@@ -176,7 +176,16 @@ export class EmailAdapter extends BaseChannelAdapter {
   }
 
   async send(prospect: Prospect, action: string, content?: string): Promise<TouchpointResult> {
-    return this.sendColdEmail(prospect, 'Quick question', content || '', undefined);
+    return {
+      success: false,
+      outcome: 'blocked',
+      error:
+        'Manual-authoring mode enabled: use queueEmail with an explicit subject and body authored by Hunter.',
+      metadata: {
+        action,
+        prospectId: prospect.id,
+      },
+    };
   }
 
   async checkStatus(prospect: Prospect): Promise<string> {

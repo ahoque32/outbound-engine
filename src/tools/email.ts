@@ -53,11 +53,31 @@ export async function queueEmail(prospectId: string, subject: string, body: stri
       };
     }
 
+    const campaignId = typeof result.metadata?.campaignId === 'string' ? result.metadata.campaignId : undefined;
+
+    // Keep local state in sync for reporting/watchdog logic.
+    try {
+      const supabase = getSupabaseClient();
+      await supabase.from('prospects').update({ email_state: 'sent' }).eq('id', prospectId);
+      await supabase.from('touchpoints').insert({
+        prospect_id: prospectId,
+        campaign_id: campaignId || null,
+        channel: 'email',
+        action: 'cold_email',
+        content: `${subject}\n\n${body}`,
+        outcome: 'sent',
+        sent_at: new Date().toISOString(),
+      });
+    } catch (syncError) {
+      // Non-fatal: queueing succeeded; keep tool result successful.
+      console.error('[EmailTool] Post-queue sync warning:', toErrorMessage(syncError));
+    }
+
     return {
       success: true,
       prospectId,
       email: prospect.email,
-      campaignId: typeof result.metadata?.campaignId === 'string' ? result.metadata.campaignId : undefined,
+      campaignId,
       outcome: result.outcome || 'queued',
     };
   } catch (error) {

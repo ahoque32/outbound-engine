@@ -40,11 +40,18 @@ export async function makeCall(prospectId: string, agentVariant?: string): Promi
     }
 
     const variant = agentVariant ? getVariantById(agentVariant) : undefined;
+    const first = (data.name || '').split(' ')[0] || data.name || 'there';
+    const company = data.company || 'your company';
+
     const outboundResult = await voiceAgent.makeOutboundCall(data.phone, {
       agentIdOverride: variant?.agentId,
       prospectData: {
-        firstName: (data.name || '').split(' ')[0] || data.name || 'there',
-        company: data.company || 'your company',
+        // ElevenLabs agent expects snake_case keys in many templates
+        first_name: first,
+        company_name: company,
+        // Keep legacy camelCase aliases for compatibility
+        firstName: first,
+        company,
         website: data.website || '',
         email: data.email || '',
       },

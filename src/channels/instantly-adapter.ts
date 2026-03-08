@@ -184,7 +184,10 @@ export async function deactivateCampaign(id: string): Promise<void> {
 }
 
 export async function deleteCampaign(id: string): Promise<void> {
-  await req(`/campaigns/${id}`, { method: 'DELETE' });
+  await req(`/campaigns/${id}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'text/plain' },
+  });
 }
 
 // ── Leads ─────────────────────────────────────────────────────────────────────

@@ -6,3 +6,4 @@ export * from './ghl';
 export * from './reporting';
 export * from './gap-backfill';
 export * from './manifest';
+export * from './call-logs';

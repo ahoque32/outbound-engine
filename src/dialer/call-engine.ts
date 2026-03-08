@@ -412,6 +412,13 @@ export class CallEngine {
         agent_name: (VARIANT_AGENT_NAMES[variant.id] || 'Ava'),
       };
 
+      // Hard guard: required variables for agent first message
+      if (!dynamicVariables.first_name || !dynamicVariables.company_name) {
+        throw new Error(`Missing required dynamic variables: first_name='${dynamicVariables.first_name}', company_name='${dynamicVariables.company_name}'`);
+      }
+
+      let conversationId: string | undefined;
+
       if (this.config.dryRun) {
         console.log('[CallEngine.callProspect] DRY RUN - Simulating call');
         console.log('[CallEngine.callProspect] Would use variant:', variant.id);
@@ -443,6 +450,7 @@ export class CallEngine {
           throw new Error('Failed to initiate call: ' + outboundResult.error);
         }
 
+        conversationId = outboundResult.conversationId;
         callResult.callSid = outboundResult.callSid;
         callResult.status = 'answered';
         callResult.notes = `ElevenLabs conversation: ${outboundResult.conversationId} | variant: ${variant.id}`;
@@ -459,6 +467,7 @@ export class CallEngine {
 
       await this.updateCallLog(callLogId, {
         twilio_call_sid: callResult.callSid,
+        conversation_id: conversationId,
         agent_variant: variant.id,
         agent_id_used: variant.agentId,
         status: callResult.status,
@@ -467,9 +476,21 @@ export class CallEngine {
       callResult.success = true;
       callResult.duration = Math.floor((Date.now() - startTime) / 1000);
 
-      // If call was very short (< 5s), it's likely voicemail or hangup - not interested
-      if (callResult.duration < 5) {
-        callResult.outcome = 'voicemail';
+      // Do not force voicemail based only on local duration.
+      // Final outcome should come from transcript/conversation analysis.
+      if (!callResult.outcome) {
+        callResult.outcome = 'unknown';
+      }
+
+      // Best-effort: fetch termination reason for auditing and troubleshooting
+      let terminationReason: string | undefined;
+      if (conversationId) {
+        try {
+          const conv: any = await voiceAgent.getConversation(conversationId);
+          terminationReason = conv?.metadata?.termination_reason || conv?.metadata?.error?.reason;
+        } catch {
+          // Ignore fetch failures; call flow should continue
+        }
       }
 
       // Update call log with final result
@@ -478,7 +499,9 @@ export class CallEngine {
         outcome: callResult.outcome,
         duration_seconds: callResult.duration,
         transcript: callResult.transcript,
-        notes: callResult.notes,
+        notes: terminationReason
+          ? `${callResult.notes || ''} | termination_reason: ${terminationReason}`.trim()
+          : callResult.notes,
         callback_at: callResult.callbackAt?.toISOString(),
         ended_at: new Date().toISOString(),
       });
